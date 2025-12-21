@@ -1,0 +1,42 @@
+Galileosky Parser - Working Server Package
+==========================================
+
+Build Date: $(date)
+Build System: $(uname -a)
+Node.js Version: $(node -v)
+npm Version: $(npm -v)
+PM2 Version: $(pm2 -v)
+
+Package Contents:
+- Complete working application from production server
+- All dependencies included
+- Production configuration
+- Database initialization scripts
+- Setup script for easy installation
+
+Target System Requirements:
+- Linux x86_64
+- sudo/root access
+- Internet connection for Node.js/PM2 installation
+
+Installation:
+1. Extract package
+2. chmod +x setup.sh
+3. sudo ./setup.sh
+
+Access:
+- Web Dashboard: http://server-ip
+- Mobile Interface: http://server-ip/mobile
+- Backend API: http://server-ip/api
+- TCP Server: server-ip:3003
+
+Default Login:
+- Username: admin
+- Password: admin123
+
+Features:
+- Copy-paste installation
+- Production-ready configuration
+- PM2 process management
+- Automatic startup
+- Nginx reverse proxy

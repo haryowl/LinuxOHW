@@ -1,0 +1,44 @@
+{
+  "short_name": "OHW",
+  "name": "OHW Parser",
+  "description": "Real-time device tracking and data management system",
+  "icons": [
+    {
+      "src": "favicon.ico",
+      "sizes": "64x64 32x32 24x24 16x16",
+      "type": "image/x-icon"
+    }
+  ],
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#1976d2",
+  "background_color": "#ffffff",
+  "orientation": "portrait-primary",
+  "scope": "/",
+  "lang": "en",
+  "categories": ["business", "productivity", "utilities"],
+
+  "shortcuts": [
+    {
+      "name": "Dashboard",
+      "short_name": "Dashboard",
+      "description": "View system dashboard",
+      "url": "/",
+      "icons": [{ "src": "favicon.ico", "sizes": "192x192" }]
+    },
+    {
+      "name": "Devices",
+      "short_name": "Devices",
+      "description": "Manage devices",
+      "url": "/devices",
+      "icons": [{ "src": "favicon.ico", "sizes": "192x192" }]
+    },
+    {
+      "name": "Tracking",
+      "short_name": "Tracking",
+      "description": "Track device locations",
+      "url": "/tracking",
+      "icons": [{ "src": "favicon.ico", "sizes": "192x192" }]
+    }
+  ]
+} 

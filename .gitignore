@@ -1,0 +1,140 @@
+# Dependencies
+node_modules/
+**/node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+**/package-lock.json
+
+# Production build (optional - can include if you want)
+# frontend/build/
+# mobile-frontend/build/
+
+# Environment variables (SENSITIVE - DO NOT COMMIT)
+env.production
+.env
+.env.local
+.env.development
+.env.test
+.env.production
+*.env
+
+# Database files (SENSITIVE - DO NOT COMMIT)
+*.sqlite
+*.sqlite3
+*.db
+backend/data/*.sqlite
+backend/data/*.sqlite3
+backend/data/sessions.sqlite
+backend/data/prod.sqlite
+
+# Logs
+logs/
+*.log
+**/*.log
+backend/logs/
+frontend/logs/
+mobile-frontend/logs/
+
+# OS-specific files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+*.Zone.Identifier
+desktop.ini
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+*.sublime-project
+*.sublime-workspace
+
+# Backup files
+*.backup
+*.bak
+*.backup2
+backups/
+**/backups/
+
+# Temporary files
+*.tmp
+*.temp
+tmp/
+temp/
+.cache/
+
+# Build artifacts (if not including pre-built)
+# dist/
+# build/
+
+# Exports (user data - should not be in repo)
+backend/exports/
+exports/
+*.pfsl
+*.csv
+
+# Uploads (user data - should not be in repo)
+uploads/
+**/uploads/
+
+# PM2 files
+.pm2/
+dump.pm2
+
+# Coverage reports
+coverage/
+.nyc_output/
+*.lcov
+
+# Testing
+.jest/
+
+# Misc
+*.pid
+*.seed
+*.pid.lock
+.npm
+.eslintcache
+
+# Windows specific
+*.lnk
+
+# Linux specific
+*~
+
+# MacOS specific
+.AppleDouble
+.LSOverride
+
+# Buffer and temporary data
+backend/data/buffer/
+data/buffer/
+
+# Session files
+sessions/
+*.session
+
+# SSL certificates (if any)
+*.pem
+*.key
+*.crt
+*.cert
+
+# Secrets and keys
+*.key
+*.pem
+secrets/
+.secrets
+
+

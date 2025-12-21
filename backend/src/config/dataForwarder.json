@@ -1,0 +1,9 @@
+{
+  "enabled": false,
+  "targetUrl": "http://accessmyship.com:80/comGpsGate/protocols/gpsgate/",
+  "autoForwardEnabled": false,
+  "autoForwardIntervalMinutes": 1,
+  "forwardDeviceImeis": [
+    "862311067408151"
+  ]
+}
