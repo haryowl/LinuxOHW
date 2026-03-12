@@ -164,8 +164,14 @@ app.use((req, res, next) => {
 
 // Apply general rate limiting to all API routes (except login which has stricter limit)
 const { rateLimit } = require('./middleware/rateLimiter');
-const apiRateLimit = rateLimit(100, 900000);
+const apiRateLimitEnabled = process.env.RATE_LIMIT_ENABLED !== 'false';
+const apiRateLimitMaxRequests = Number.parseInt(process.env.RATE_LIMIT_MAX_REQUESTS, 10) || 100;
+const apiRateLimitWindowMs = Number.parseInt(process.env.RATE_LIMIT_WINDOW_MS, 10) || 900000;
+const apiRateLimit = rateLimit(apiRateLimitMaxRequests, apiRateLimitWindowMs);
 app.use('/api', (req, res, next) => {
+    if (!apiRateLimitEnabled) {
+        return next();
+    }
     if (req.path.startsWith('/auth/')) {
         return next();
     }

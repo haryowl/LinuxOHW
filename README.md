@@ -90,6 +90,11 @@ Optional login throttling defaults:
 - `RATE_LIMIT_LOGIN_MAX_REQUESTS=30`
 - `RATE_LIMIT_LOGIN_WINDOW_MS=60000`
 
+Optional general API throttling defaults:
+- `RATE_LIMIT_ENABLED=true`
+- `RATE_LIMIT_MAX_REQUESTS=100`
+- `RATE_LIMIT_WINDOW_MS=900000`
+
 See [ENVIRONMENT_VARIABLES.md](ENVIRONMENT_VARIABLES.md) for complete documentation.
 
 ### Default Login

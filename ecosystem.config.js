@@ -65,6 +65,8 @@ module.exports = {
       HEALTH_CHECK_ENABLED: process.env.HEALTH_CHECK_ENABLED || 'true',
       METRICS_ENABLED: process.env.METRICS_ENABLED || 'true',
       RATE_LIMIT_ENABLED: process.env.RATE_LIMIT_ENABLED || 'true',
+      RATE_LIMIT_WINDOW_MS: process.env.RATE_LIMIT_WINDOW_MS || '900000',
+      RATE_LIMIT_MAX_REQUESTS: process.env.RATE_LIMIT_MAX_REQUESTS || '100',
       RATE_LIMIT_LOGIN_WINDOW_MS: process.env.RATE_LIMIT_LOGIN_WINDOW_MS || '60000',
       RATE_LIMIT_LOGIN_MAX_REQUESTS: process.env.RATE_LIMIT_LOGIN_MAX_REQUESTS || '30'
     },
