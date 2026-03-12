@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback } fr
 import { useSnackbar } from 'notistack';
 import useWebSocket from '../hooks/useWebSocket';
 import { BASE_URL } from '../services/api';
+import { useAuth } from './AuthContext';
 
 const DataContext = createContext(null);
 
@@ -19,6 +20,7 @@ export function DataProvider({ children }) {
     lastUpdate: null
   });
   const { enqueueSnackbar } = useSnackbar();
+  const { user, loading: authLoading } = useAuth();
 
   // WebSocket connection for real-time updates
   const handleWebSocketMessage = useCallback((message) => {
@@ -76,7 +78,7 @@ export function DataProvider({ children }) {
     }
   }, [enqueueSnackbar]);
 
-  const ws = useWebSocket(`${BASE_URL.replace('http', 'ws')}`, handleWebSocketMessage);
+  const ws = useWebSocket(user ? `${BASE_URL.replace('http', 'ws')}` : null, handleWebSocketMessage);
 
   // Fetch initial data
   const fetchDevices = useCallback(async () => {
@@ -195,6 +197,27 @@ export function DataProvider({ children }) {
 
   // Load initial data with optimized loading
   useEffect(() => {
+    if (authLoading) {
+      setLoading(true);
+      return undefined;
+    }
+
+    if (!user) {
+      setDevices([]);
+      setRecords([]);
+      setAlerts([]);
+      setError(null);
+      setStats({
+        totalDevices: 0,
+        activeDevices: 0,
+        totalRecords: 0,
+        totalAlerts: 0,
+        lastUpdate: null
+      });
+      setLoading(false);
+      return undefined;
+    }
+
     const loadData = async () => {
       setLoading(true);
       setError(null);
@@ -258,17 +281,22 @@ export function DataProvider({ children }) {
     };
 
     loadData();
-  }, [fetchDevices, fetchRecords, fetchAlerts, fetchStats]);
+    return undefined;
+  }, [authLoading, user, fetchDevices, fetchRecords, fetchAlerts, fetchStats]);
 
   // Refresh data periodically with optimized intervals
   useEffect(() => {
+    if (authLoading || !user) {
+      return undefined;
+    }
+
     const interval = setInterval(() => {
       // Only refresh stats, not all data
       fetchStats();
     }, 30000); // Refresh stats every 30 seconds
 
     return () => clearInterval(interval);
-  }, [fetchStats]);
+  }, [authLoading, user, fetchStats]);
 
   // Update stats when data changes
   useEffect(() => {

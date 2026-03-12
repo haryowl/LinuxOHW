@@ -164,7 +164,13 @@ app.use((req, res, next) => {
 
 // Apply general rate limiting to all API routes (except login which has stricter limit)
 const { rateLimit } = require('./middleware/rateLimiter');
-app.use('/api', rateLimit(100, 900000)); // 100 requests per 15 minutes
+const apiRateLimit = rateLimit(100, 900000);
+app.use('/api', (req, res, next) => {
+    if (req.path.startsWith('/auth/')) {
+        return next();
+    }
+    return apiRateLimit(req, res, next);
+});
 
 // Mount routes directly
 app.use('/api/auth', require('./routes/auth').router);
