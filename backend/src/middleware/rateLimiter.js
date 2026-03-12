@@ -2,6 +2,11 @@
 const logger = require('../utils/logger');
 const { AppError } = require('../utils/errorHandler');
 
+function getPositiveInt(value, fallback) {
+    const parsed = Number.parseInt(value, 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 // Simple in-memory rate limiter
 class RateLimiter {
     constructor() {
@@ -113,7 +118,10 @@ function rateLimit(maxRequests = 100, windowMs = 900000, getIdentifier = null, s
  * Stricter rate limit for login endpoint
  */
 function loginRateLimit(req, res, next) {
-    return rateLimit(5, 60000, (req) => {
+    const loginMaxRequests = getPositiveInt(process.env.RATE_LIMIT_LOGIN_MAX_REQUESTS, 30);
+    const loginWindowMs = getPositiveInt(process.env.RATE_LIMIT_LOGIN_WINDOW_MS, 60000);
+
+    return rateLimit(loginMaxRequests, loginWindowMs, (req) => {
         // Use IP + username for login attempts
         const username = req.body?.username || 'unknown';
         return `${req.ip}-${username}`;

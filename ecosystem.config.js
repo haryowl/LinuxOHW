@@ -64,7 +64,9 @@ module.exports = {
       BACKUP_DIR: process.env.BACKUP_DIR || 'backups',
       HEALTH_CHECK_ENABLED: process.env.HEALTH_CHECK_ENABLED || 'true',
       METRICS_ENABLED: process.env.METRICS_ENABLED || 'true',
-      RATE_LIMIT_ENABLED: process.env.RATE_LIMIT_ENABLED || 'true'
+      RATE_LIMIT_ENABLED: process.env.RATE_LIMIT_ENABLED || 'true',
+      RATE_LIMIT_LOGIN_WINDOW_MS: process.env.RATE_LIMIT_LOGIN_WINDOW_MS || '60000',
+      RATE_LIMIT_LOGIN_MAX_REQUESTS: process.env.RATE_LIMIT_LOGIN_MAX_REQUESTS || '30'
     },
     
     // Logging configuration

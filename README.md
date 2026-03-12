@@ -86,6 +86,10 @@ nano env.production
 - `SESSION_SECRET` - Generate with: `openssl rand -hex 32`
 - `SERVER_IP` - Your server IP address
 
+Optional login throttling defaults:
+- `RATE_LIMIT_LOGIN_MAX_REQUESTS=30`
+- `RATE_LIMIT_LOGIN_WINDOW_MS=60000`
+
 See [ENVIRONMENT_VARIABLES.md](ENVIRONMENT_VARIABLES.md) for complete documentation.
 
 ### Default Login
