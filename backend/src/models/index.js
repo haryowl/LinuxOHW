@@ -13,6 +13,7 @@ const defineDeviceGroup = require('./deviceGroup');
 const defineUserDeviceAccess = require('./userDeviceAccess');
 const defineUserDeviceGroupAccess = require('./userDeviceGroupAccess');
 const defineRole = require('./role');
+const defineDeviceCommand = require('./deviceCommand');
 
 const path = require('path');
 
@@ -42,6 +43,7 @@ const DeviceGroup = defineDeviceGroup(sequelize);
 const UserDeviceAccess = defineUserDeviceAccess(sequelize);
 const UserDeviceGroupAccess = defineUserDeviceGroupAccess(sequelize);
 const Role = defineRole(sequelize);
+const DeviceCommand = defineDeviceCommand(sequelize);
 
 // Setup associations
 Device.hasMany(FieldMapping, {
@@ -146,6 +148,17 @@ Role.belongsTo(User, {
     as: 'creator'
 });
 
+// Device command associations
+Device.hasMany(DeviceCommand, {
+    foreignKey: 'deviceId',
+    as: 'commands'
+});
+
+DeviceCommand.belongsTo(Device, {
+    foreignKey: 'deviceId',
+    as: 'device'
+});
+
 // Add user device access associations
 User.belongsToMany(Device, {
     through: UserDeviceAccess,
@@ -188,5 +201,6 @@ module.exports = {
     DeviceGroup,
     UserDeviceAccess,
     UserDeviceGroupAccess,
-    Role
+    Role,
+    DeviceCommand
 };

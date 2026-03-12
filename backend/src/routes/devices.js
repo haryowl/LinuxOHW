@@ -11,6 +11,47 @@ const { requireAuth } = require('./auth');
 const { checkDeviceAccess, filterDevicesByPermission } = require('../middleware/permissions');
 const logger = require('../utils/logger');
 
+function normalizeCoordinateValue(value, maxAbs) {
+    if (value === null || value === undefined) {
+        return value;
+    }
+    let numeric = Number(value);
+    if (!Number.isFinite(numeric)) {
+        return value;
+    }
+    let attempts = 0;
+    while (Math.abs(numeric) > maxAbs && attempts < 3) {
+        numeric = numeric / 10;
+        attempts += 1;
+    }
+    return numeric;
+}
+
+function normalizeCoordinates(latitude, longitude) {
+    return {
+        latitude: normalizeCoordinateValue(latitude, 90),
+        longitude: normalizeCoordinateValue(longitude, 180)
+    };
+}
+
+function resolveLocationTimestamp(recordDatetime, recordTimestamp) {
+    const now = Date.now();
+    const datetime = recordDatetime ? new Date(recordDatetime) : null;
+    const timestamp = recordTimestamp ? new Date(recordTimestamp) : null;
+
+    if (datetime && !Number.isNaN(datetime.getTime())) {
+        if (datetime.getTime() <= now + 5 * 60 * 1000) {
+            return datetime.toISOString();
+        }
+    }
+
+    if (timestamp && !Number.isNaN(timestamp.getTime())) {
+        return timestamp.toISOString();
+    }
+
+    return new Date().toISOString();
+}
+
 // Simple in-memory cache for devices (5 minutes TTL)
 const deviceCache = new Map();
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
@@ -41,6 +82,11 @@ function clearUserDeviceCache(userId) {
             console.log(`🗑️ Cleared device cache for user ${userId}`);
         }
     }
+}
+
+function clearAllDeviceCache() {
+    deviceCache.clear();
+    console.log('🗑️ Cleared device cache for all users');
 }
 
 // Get multi-device tracking data with color assignment and GPS filtering
@@ -536,6 +582,7 @@ router.get('/locations', requireAuth, filterDevicesByPermission, asyncHandler(as
             'latitude',
             'longitude', 
             'datetime',
+            'timestamp',
             'speed',
             'direction',
             'altitude',
@@ -550,12 +597,19 @@ router.get('/locations', requireAuth, filterDevicesByPermission, asyncHandler(as
     // Create location map (take latest for each device)
     const locationMap = new Map();
     recentRecords.forEach(record => {
-        if (!locationMap.has(record.deviceImei) || 
-            new Date(record.datetime) > new Date(locationMap.get(record.deviceImei).timestamp)) {
+        const normalized = normalizeCoordinates(record.latitude, record.longitude);
+        const resolvedTimestamp = resolveLocationTimestamp(record.datetime, record.timestamp);
+        const recordTime = record.datetime || record.timestamp;
+        const recordTimeMs = recordTime ? new Date(recordTime).getTime() : 0;
+        const existing = locationMap.get(record.deviceImei);
+        const existingTimeMs = existing?.lastRecordTime ? new Date(existing.lastRecordTime).getTime() : 0;
+
+        if (!existing || recordTimeMs > existingTimeMs) {
             locationMap.set(record.deviceImei, {
-                latitude: record.latitude,
-                longitude: record.longitude,
-                timestamp: record.datetime,
+                latitude: normalized.latitude,
+                longitude: normalized.longitude,
+                timestamp: resolvedTimestamp,
+                lastRecordTime: recordTime,
                 speed: record.speed,
                 direction: record.direction,
                 altitude: record.altitude,
@@ -649,6 +703,7 @@ router.put('/:id', requireAuth, checkDeviceAccess, asyncHandler(async (req, res)
     }
 
     await device.update(updates);
+    clearAllDeviceCache();
     
     // Return the updated device
     const updatedDevice = await deviceManager.getDeviceById(id);

@@ -182,9 +182,10 @@ router.post('/:id/devices', requireAuth, requireManager, async (req, res) => {
       return res.status(404).json({ error: 'Device not found' });
     }
 
-    // Check if device is already in this group
+    // Check if device is already in this group (idempotent success)
     if (device.groupId === groupId) {
-      return res.status(400).json({ error: 'Device is already in this group' });
+      logger.info('Device already in group', { groupId, deviceId, requestedBy: req.user.userId });
+      return res.json({ message: 'Device is already in this group', alreadyInGroup: true });
     }
 
     // Add device to group

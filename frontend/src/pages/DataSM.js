@@ -21,11 +21,18 @@ import {
   Switch,
   FormControlLabel,
   Alert,
-  CircularProgress
+  CircularProgress,
+  IconButton,
+  List,
+  ListItem,
+  ListItemText,
+  ListItemSecondaryAction
 } from '@mui/material';
 import FileDownloadIcon from '@mui/icons-material/FileDownload';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import ScheduleIcon from '@mui/icons-material/Schedule';
+import AddIcon from '@mui/icons-material/Add';
+import DeleteIcon from '@mui/icons-material/Delete';
 import axios from 'axios';
 
 // Use the same API detection logic as your other components
@@ -52,7 +59,9 @@ const DataSM = () => {
   const [availableDevices, setAvailableDevices] = useState([]);
   const [selectedDevices, setSelectedDevices] = useState([]);
   const [autoExportEnabled, setAutoExportEnabled] = useState(false);
-  const [autoExportTime, setAutoExportTime] = useState('00:00');
+  const [autoExportTimes, setAutoExportTimes] = useState(['00:00']); // Array of times
+  const [newExportTime, setNewExportTime] = useState('00:00'); // For adding new time
+  const [hoursBack, setHoursBack] = useState(24); // Time range: 1-168 hours (7 days)
   const [exporting, setExporting] = useState(false);
 
   // Field mapping for Data SM
@@ -77,6 +86,7 @@ const DataSM = () => {
       const params = {
         startDate: new Date(`${startDate}T${startHour}:00:00`).toISOString(),
         endDate: new Date(`${endDate}T${endHour}:59:59`).toISOString(),
+		merge: '1',
       };
       
       if (selectedDevices.length > 0) {
@@ -132,18 +142,22 @@ const DataSM = () => {
       if (dataSMConfig && dataSMConfig.enabled) {
         console.log('✅ Setting auto-export enabled:', dataSMConfig.enabled);
         setAutoExportEnabled(true);
-        // Only set time if it's not already set by user (not '00:00' or empty)
-        if (dataSMConfig.time && dataSMConfig.time !== '00:00') {
-          setAutoExportTime(dataSMConfig.time);
+        // Support both old format (single time) and new format (multiple times)
+        if (dataSMConfig.times && dataSMConfig.times.length > 0) {
+          setAutoExportTimes(dataSMConfig.times);
+        } else if (dataSMConfig.time) {
+          setAutoExportTimes([dataSMConfig.time]);
+        }
+        // Set time range (hours back)
+        if (dataSMConfig.hoursBack) {
+          setHoursBack(dataSMConfig.hoursBack);
         }
         setSelectedDevices(dataSMConfig.devices || []);
       } else {
         console.log('ℹ️ No enabled Data SM config found, resetting to defaults');
         setAutoExportEnabled(false);
-        // Don't reset time to '00:00' if user has set a different time
-        if (autoExportTime === '00:00') {
-          setAutoExportTime('00:00');
-        }
+        setAutoExportTimes(['00:00']);
+        setHoursBack(24);
         setSelectedDevices([]);
       }
     } catch (error) {
@@ -156,7 +170,7 @@ const DataSM = () => {
       });
       // Reset to defaults on error
       setAutoExportEnabled(false);
-      setAutoExportTime('00:00');
+      setAutoExportTimes(['00:00']);
       setSelectedDevices([]);
     }
   };
@@ -231,7 +245,8 @@ const DataSM = () => {
       const newState = !autoExportEnabled;
       console.log('🔄 Sending auto-export request:', {
         enabled: newState,
-        time: autoExportTime,
+        times: autoExportTimes,
+        hoursBack: hoursBack,
         devices: selectedDevices,
         fields: Object.keys(fieldMapping),
         customHeaders: fieldMapping
@@ -239,7 +254,8 @@ const DataSM = () => {
       
       const response = await axios.post(`${BASE_URL}/api/auto-export/sm`, {
         enabled: newState,
-        time: autoExportTime,
+        times: autoExportTimes,
+        hoursBack: hoursBack,
         devices: selectedDevices,
         fields: Object.keys(fieldMapping),
         customHeaders: fieldMapping
@@ -260,6 +276,58 @@ const DataSM = () => {
     }
   };
 
+  const handleAddExportTime = () => {
+    if (newExportTime && !autoExportTimes.includes(newExportTime)) {
+      const updatedTimes = [...autoExportTimes, newExportTime].sort();
+      setAutoExportTimes(updatedTimes);
+      setNewExportTime('00:00');
+      
+      // If auto-export is enabled, update backend immediately
+      if (autoExportEnabled) {
+        updateAutoExportConfig(updatedTimes, hoursBack);
+      }
+    }
+  };
+
+  const handleRemoveExportTime = (timeToRemove) => {
+    if (autoExportTimes.length > 1) {
+      const updatedTimes = autoExportTimes.filter(t => t !== timeToRemove);
+      setAutoExportTimes(updatedTimes);
+      
+      // If auto-export is enabled, update backend immediately
+      if (autoExportEnabled) {
+        updateAutoExportConfig(updatedTimes, hoursBack);
+      }
+    }
+  };
+
+  const handleHoursBackChange = async (newHoursBack) => {
+    setHoursBack(newHoursBack);
+    
+    // If auto-export is enabled, update backend immediately
+    if (autoExportEnabled) {
+      await updateAutoExportConfig(autoExportTimes, newHoursBack);
+    }
+  };
+
+  const updateAutoExportConfig = async (times, hoursBackValue) => {
+    try {
+      await axios.post(`${BASE_URL}/api/auto-export/sm`, {
+        enabled: true,
+        times: times,
+        hoursBack: hoursBackValue,
+        devices: selectedDevices,
+        fields: Object.keys(fieldMapping),
+        customHeaders: fieldMapping
+      }, {
+        withCredentials: true
+      });
+      console.log('✅ Auto-export config updated');
+    } catch (error) {
+      console.error('❌ Error updating auto-export config:', error);
+    }
+  };
+
   const formatDataForDisplay = (records) => {
     return records.map(record => {
       const device = availableDevices.find(d => d.imei === record.deviceImei);
@@ -267,15 +335,15 @@ const DataSM = () => {
         deviceName: device ? device.name : record.deviceImei,
         deviceImei: record.deviceImei,
         datetime: record.datetime ? new Date(record.datetime).toLocaleString() : 'N/A',
-        latitude: record.latitude || 'N/A',
-        longitude: record.longitude || 'N/A',
-        speed: record.speed === null || record.speed === undefined ? 'N/A' : record.speed,
-        altitude: record.altitude || 'N/A',
-        satellites: record.satellites || 'N/A',
-        userData0: record.userData0 || 'N/A',
-        userData1: record.userData1 || 'N/A',
-        modbus0: record.modbus0 || 'N/A',
-        userData2: record.userData2 || 'N/A'
+        latitude: record.latitude === null || record.latitude === undefined ? 'N/A' : record.latitude,
+        longitude: record.longitude === null || record.longitude === undefined ? 'N/A' : record.longitude,        
+		speed: record.speed === null || record.speed === undefined ? 'N/A' : record.speed,
+        altitude: record.altitude === null || record.altitude === undefined ? 'N/A' : record.altitude,
+        satellites: record.satellites === null || record.satellites === undefined ? 'N/A' : record.satellites,
+        userData0: record.userData0 === null || record.userData0 === undefined ? 'N/A' : record.userData0,
+        userData1: record.userData1 === null || record.userData1 === undefined ? 'N/A' : record.userData1,
+        modbus0: record.modbus0 === null || record.modbus0 === undefined ? 'N/A' : record.modbus0,
+        userData2: record.userData2 === null || record.userData2 === undefined ? 'N/A' : record.userData2
       };
     });
   };
@@ -395,38 +463,22 @@ const DataSM = () => {
                 />
               </Grid>
               <Grid item xs={12} md={4}>
-              <TextField
-  fullWidth
-  label="Export Time (UTC)"
-  type="time"
-  value={autoExportTime}
-  onChange={async (e) => {
-    const newTime = e.target.value;
-    setAutoExportTime(newTime);
-    
-    // If auto-export is enabled, update the backend immediately
-    if (autoExportEnabled) {
-      try {
-        console.log('🔄 Updating auto-export time to:', newTime);
-        await axios.post(`${BASE_URL}/api/auto-export/sm`, {
-          enabled: true,
-          time: newTime,
-          devices: selectedDevices,
-          fields: Object.keys(fieldMapping),
-          customHeaders: fieldMapping
-        }, {
-          withCredentials: true
-        });
-        console.log('✅ Auto-export time updated to:', newTime);
-      } catch (error) {
-        console.error('❌ Error updating auto-export time:', error);
-      }
-    }
-  }}
-  disabled={!autoExportEnabled}
-  InputLabelProps={{ shrink: true }}
-/>
-
+                <TextField
+                  fullWidth
+                  label="Time Range (Hours Back)"
+                  type="number"
+                  value={hoursBack}
+                  onChange={(e) => {
+                    const value = parseInt(e.target.value, 10);
+                    if (value >= 1 && value <= 168) {
+                      handleHoursBackChange(value);
+                    }
+                  }}
+                  disabled={!autoExportEnabled}
+                  inputProps={{ min: 1, max: 168 }}
+                  helperText="Export data from X hours ago to now (1-168 hours = 7 days)"
+                  InputLabelProps={{ shrink: true }}
+                />
               </Grid>
               <Grid item xs={12} md={4}>
                 <Button
@@ -438,6 +490,54 @@ const DataSM = () => {
                 </Button>
               </Grid>
             </Grid>
+
+            {/* Multiple Export Times */}
+            <Box sx={{ mt: 3 }}>
+              <Typography variant="subtitle2" gutterBottom>
+                Export Times (UTC) - Multiple schedules per day
+              </Typography>
+              <List dense>
+                {autoExportTimes.map((time, index) => (
+                  <ListItem key={index}>
+                    <ListItemText primary={time} />
+                    <ListItemSecondaryAction>
+                      {autoExportTimes.length > 1 && (
+                        <IconButton
+                          edge="end"
+                          aria-label="delete"
+                          onClick={() => handleRemoveExportTime(time)}
+                          disabled={!autoExportEnabled}
+                        >
+                          <DeleteIcon />
+                        </IconButton>
+                      )}
+                    </ListItemSecondaryAction>
+                  </ListItem>
+                ))}
+              </List>
+              
+              {autoExportEnabled && (
+                <Box sx={{ mt: 2, display: 'flex', gap: 2, alignItems: 'center' }}>
+                  <TextField
+                    label="Add Export Time (UTC)"
+                    type="time"
+                    value={newExportTime}
+                    onChange={(e) => setNewExportTime(e.target.value)}
+                    size="small"
+                    InputLabelProps={{ shrink: true }}
+                  />
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    startIcon={<AddIcon />}
+                    onClick={handleAddExportTime}
+                    disabled={autoExportTimes.includes(newExportTime)}
+                  >
+                    Add Time
+                  </Button>
+                </Box>
+              )}
+            </Box>
           </Box>
 
           {/* Action Buttons */}

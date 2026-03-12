@@ -1,0 +1,39 @@
+[
+  {
+    "jobId": "data-sm-1766385541218",
+    "type": "data-sm",
+    "time": "00:00",
+    "times": [
+      "00:00",
+      "06:00"
+    ],
+    "hoursBack": 125,
+    "devices": [],
+    "fields": [
+      "deviceImei",
+      "datetime",
+      "latitude",
+      "longitude",
+      "altitude",
+      "satellites",
+      "speed",
+      "userData0",
+      "userData1",
+      "modbus0",
+      "userData2"
+    ],
+    "customHeaders": {
+      "deviceImei": "IMEI",
+      "datetime": "Timestamp",
+      "latitude": "Lat",
+      "longitude": "Lon",
+      "altitude": "Alt",
+      "satellites": "Satellite",
+      "speed": "Speed",
+      "userData0": "Sensor Kiri",
+      "userData1": "Sensor Kanan",
+      "modbus0": "Sensor Serial (Ultrasonic)",
+      "userData2": "Uptime Seconds"
+    }
+  }
+]

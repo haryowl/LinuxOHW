@@ -7,9 +7,34 @@ const useWebSocket = (url, onMessage) => {
   const ws = useRef(null);
   const reconnectTimeout = useRef(null);
   const reconnectAttempts = useRef(0);
-  const maxReconnectAttempts = 3;
+  const maxReconnectAttempts = 10;
   const isConnecting = useRef(false);
   const { user } = useAuth();
+
+  const resolveWebSocketUrl = useCallback(() => {
+    try {
+      if (url) {
+        const base = new URL(url);
+        const isSecure = base.protocol === 'https:' || base.protocol === 'wss:';
+        const wsProtocol = isSecure ? 'wss:' : 'ws:';
+        const host = base.port === '3000'
+          ? `${base.hostname}:3001`
+          : base.host;
+        const path = base.pathname && base.pathname !== '/' ? base.pathname : '/ws';
+        return `${wsProtocol}//${host}${path}`;
+      }
+
+      const currentUrl = new URL(window.location.href);
+      const wsProtocol = currentUrl.protocol === 'https:' ? 'wss:' : 'ws:';
+      const host = currentUrl.port === '3000'
+        ? `${currentUrl.hostname}:3001`
+        : currentUrl.host;
+      return `${wsProtocol}//${host}/ws`;
+    } catch (error) {
+      console.error('Failed to resolve WebSocket URL:', error);
+      return 'ws://localhost:3001/ws';
+    }
+  }, [url]);
 
   const connect = useCallback(() => {
     if (isConnecting.current) return;
@@ -23,16 +48,7 @@ const useWebSocket = (url, onMessage) => {
     isConnecting.current = true;
     
     try {
-      // Dynamic WebSocket URL detection - works for both localhost and IP access
-      const currentUrl = window.location.href;
-      let wsUrl;
-      
-      if (currentUrl.includes('localhost') || currentUrl.includes('127.0.0.1')) {
-        wsUrl = 'ws://localhost:3001/ws';
-      } else {
-        const url = new URL(currentUrl);
-        wsUrl = `ws://${url.hostname}:3001/ws`;
-      }
+      const wsUrl = resolveWebSocketUrl();
       
       if (ws.current && ws.current.readyState === WebSocket.OPEN) {
         ws.current.close();
@@ -45,18 +61,6 @@ const useWebSocket = (url, onMessage) => {
         console.log('WebSocket connected to:', wsUrl);
         reconnectAttempts.current = 0; // Reset reconnect attempts on successful connection
         isConnecting.current = false;
-        
-        // Send a test message to verify connection
-        setTimeout(() => {
-          if (ws.current && ws.current.readyState === WebSocket.OPEN) {
-            console.log('Sending test message...');
-            ws.current.send(JSON.stringify({ 
-              type: 'ping', 
-              timestamp: Date.now(),
-              topic: 'ping'
-            }));
-          }
-        }, 1000);
       };
 
       ws.current.onmessage = (event) => {
@@ -88,9 +92,9 @@ const useWebSocket = (url, onMessage) => {
 
         // Only attempt to reconnect if it wasn't a manual close and we haven't exceeded max attempts
         if (event.code !== 1000 && reconnectAttempts.current < maxReconnectAttempts) {
-          const delay = 3000; // Increased delay to 3 seconds
+          const delay = Math.min(10000, 1000 * Math.pow(2, reconnectAttempts.current));
           console.log(`Attempting to reconnect WebSocket in ${delay}ms (attempt ${reconnectAttempts.current + 1}/${maxReconnectAttempts})...`);
-          
+
           reconnectTimeout.current = setTimeout(() => {
             reconnectAttempts.current++;
             connect();
@@ -101,7 +105,7 @@ const useWebSocket = (url, onMessage) => {
       console.error('Error creating WebSocket connection:', error);
       isConnecting.current = false;
     }
-  }, [onMessage, user]);
+  }, [onMessage, user, resolveWebSocketUrl]);
 
   useEffect(() => {
     connect();

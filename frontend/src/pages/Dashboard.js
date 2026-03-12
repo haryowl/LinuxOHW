@@ -16,7 +16,12 @@ import {
   alpha,
   useTheme,
   ToggleButton,
-  ToggleButtonGroup
+  ToggleButtonGroup,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  OutlinedInput
 } from '@mui/material';
 import {
   Refresh as RefreshIcon,
@@ -39,6 +44,7 @@ const Dashboard = () => {
   const { enqueueSnackbar } = useSnackbar();
   const [lastRefresh, setLastRefresh] = useState(new Date());
   const [statsRange, setStatsRange] = useState('last24h'); // 'last24h' or 'allTime'
+  const [selectedDeviceImeis, setSelectedDeviceImeis] = useState([]);
   const theme = useTheme();
 
   // Helper to get the correct stats object
@@ -52,6 +58,23 @@ const Dashboard = () => {
   const handleStatsRange = (event, newRange) => {
     if (newRange) setStatsRange(newRange);
   };
+
+  const handleDeviceFilterChange = (event) => {
+    const value = event.target.value;
+    setSelectedDeviceImeis(typeof value === 'string' ? value.split(',') : value);
+  };
+
+  const visibleDevices = Array.isArray(devices)
+    ? (selectedDeviceImeis.length > 0
+        ? devices.filter((device) => selectedDeviceImeis.includes(device.imei))
+        : devices)
+    : [];
+
+  const visibleRecords = Array.isArray(records)
+    ? (selectedDeviceImeis.length > 0
+        ? records.filter((record) => selectedDeviceImeis.includes(record.deviceImei))
+        : records)
+    : [];
 
   const handleRefresh = async () => {
     try {
@@ -319,15 +342,54 @@ const Dashboard = () => {
                 <Typography variant="h5" fontWeight="600">
                   Device Locations
                 </Typography>
-                <Chip 
-                  label={`${Array.isArray(devices) ? devices.filter(d => d.latitude && d.longitude).length : 0} devices tracked`}
-                  color="primary"
-                  variant="outlined"
-                  size="small"
-                />
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                  <FormControl size="small" sx={{ minWidth: 240 }}>
+                    <InputLabel>Filter Devices</InputLabel>
+                    <Select
+                      multiple
+                      value={selectedDeviceImeis}
+                      onChange={handleDeviceFilterChange}
+                      input={<OutlinedInput label="Filter Devices" />}
+                      renderValue={(selected) => (
+                        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                          {selected.map((value) => {
+                            const device = Array.isArray(devices)
+                              ? devices.find((item) => item.imei === value)
+                              : null;
+                            return (
+                              <Chip
+                                key={value}
+                                label={device?.name || value}
+                                size="small"
+                              />
+                            );
+                          })}
+                        </Box>
+                      )}
+                    >
+                      {!Array.isArray(devices) || devices.length === 0 ? (
+                        <MenuItem disabled>No devices available</MenuItem>
+                      ) : (
+                        devices.map((device) => (
+                          <MenuItem key={device.imei} value={device.imei}>
+                            {device.name || device.imei}
+                          </MenuItem>
+                        ))
+                      )}
+                    </Select>
+                  </FormControl>
+                  <Chip
+                    label={selectedDeviceImeis.length > 0
+                      ? `${selectedDeviceImeis.length} selected`
+                      : `${visibleDevices.length} devices`}
+                    color="primary"
+                    variant="outlined"
+                    size="small"
+                  />
+                </Box>
               </Box>
               <Box sx={{ height: 'calc(100% - 60px)', borderRadius: 2, overflow: 'hidden' }}>
-                <TrackingMap />
+                <TrackingMap selectedImeis={selectedDeviceImeis} />
               </Box>
             </CardContent>
           </Card>
@@ -341,7 +403,7 @@ const Dashboard = () => {
                 Data Trends & Analytics
               </Typography>
               <DataChart 
-                data={Array.isArray(records) ? records.slice(0, 100) : []} 
+                data={visibleRecords.slice(0, 100)}
                 compact={false}
               />
             </CardContent>
@@ -356,7 +418,7 @@ const Dashboard = () => {
                 Recent Device Activity
               </Typography>
               <Box sx={{ maxHeight: 300, overflow: 'auto' }}>
-                {Array.isArray(devices) ? devices.slice(0, 5).map((device) => (
+                {visibleDevices.length > 0 ? visibleDevices.slice(0, 5).map((device) => (
                   <Box 
                     key={device.id} 
                     sx={{ 

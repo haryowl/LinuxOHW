@@ -96,7 +96,9 @@ cd "$APP_DIR"
 echo "🔍 Validating environment..."
 if [ ! -f "env.production" ]; then
     echo "⚠️  env.production not found. Creating from template..."
-    cp env.production env.production.backup 2>/dev/null || true
+    if [ -f "env.production.example" ]; then
+        cp env.production.example env.production
+    fi
 fi
 
 # Check required environment variables

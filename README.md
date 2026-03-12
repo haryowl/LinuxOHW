@@ -1,4 +1,4 @@
-# Gali-Parse - Galileosky GPS Tracking Parser
+# LinuxParser - Galileosky GPS Tracking Parser
 
 A production-ready GPS tracking parser for Galileosky devices with web dashboard, real-time monitoring, and data export capabilities.
 
@@ -31,8 +31,8 @@ A production-ready GPS tracking parser for Galileosky devices with web dashboard
 
 ```bash
 # Clone the repository
-git clone https://github.com/haryowl/LinuxOHW.git
-cd LinuxOHW
+git clone https://github.com/haryowl/LinuxParser.git
+cd LinuxParser
 
 # Install system dependencies (Ubuntu/WSL)
 sudo bash scripts/install-dependencies-ubuntu.sh
@@ -264,6 +264,6 @@ For issues and questions, please open an issue on GitHub.
 
 ---
 
-**Repository**: [https://github.com/haryowl/LinuxOHW](https://github.com/haryowl/LinuxOHW)
+**Repository**: [https://github.com/haryowl/LinuxParser](https://github.com/haryowl/LinuxParser)
 
 

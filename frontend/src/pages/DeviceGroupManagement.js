@@ -155,8 +155,12 @@ const DeviceGroupManagement = () => {
 
     try {
       console.log('🔄 Adding device to group:', { deviceId: selectedDeviceId, groupId: deviceDialog.group.id });
-      await apiAddDeviceToGroup(deviceDialog.group.id, selectedDeviceId);
-      enqueueSnackbar('Device added to group successfully', { variant: 'success' });
+      const result = await apiAddDeviceToGroup(deviceDialog.group.id, selectedDeviceId);
+      if (result?.alreadyInGroup) {
+        enqueueSnackbar('Device is already in this group', { variant: 'info' });
+      } else {
+        enqueueSnackbar('Device added to group successfully', { variant: 'success' });
+      }
       setDeviceDialog({ open: false, group: null });
       setSelectedDeviceId('');
       console.log('🔄 Reloading data after adding device...');
@@ -164,7 +168,7 @@ const DeviceGroupManagement = () => {
       console.log('✅ Data reloaded successfully');
     } catch (error) {
       console.error('Error adding device to group:', error);
-      enqueueSnackbar(error.response?.data?.error || 'Failed to add device to group', { variant: 'error' });
+      enqueueSnackbar(error.message || 'Failed to add device to group', { variant: 'error' });
     }
   };
 

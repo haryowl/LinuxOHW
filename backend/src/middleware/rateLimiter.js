@@ -62,10 +62,22 @@ const rateLimiter = new RateLimiter();
  * @param {number} maxRequests - Maximum requests per window
  * @param {number} windowMs - Time window in milliseconds
  * @param {function} getIdentifier - Function to get unique identifier (default: IP address)
+ * @param {boolean} skipAuthenticated - Skip rate limiting for authenticated users
  */
-function rateLimit(maxRequests = 100, windowMs = 900000, getIdentifier = null) {
+function rateLimit(maxRequests = 100, windowMs = 900000, getIdentifier = null, skipAuthenticated = true) {
     return (req, res, next) => {
         try {
+            // Skip rate limiting for authenticated users (they're trusted)
+            // Only skip when auth was already verified upstream.
+            if (skipAuthenticated) {
+                const hasUserSession = req.user || (req.session && req.session.userId);
+
+                if (hasUserSession) {
+                    // Authenticated user - skip rate limiting
+                    return next();
+                }
+            }
+
             // Get identifier (IP address by default)
             const identifier = getIdentifier 
                 ? getIdentifier(req) 
@@ -84,7 +96,8 @@ function rateLimit(maxRequests = 100, windowMs = 900000, getIdentifier = null) {
                 logger.warn('Rate limit exceeded', { 
                     identifier, 
                     url: req.url,
-                    method: req.method 
+                    method: req.method,
+                    hasAuth: !!(req.user || (req.session && req.session.userId))
                 });
                 throw new AppError('Too many requests, please try again later', 429);
             }

@@ -185,6 +185,20 @@ const Layout = ({ children }) => {
       description: 'Sensor monitoring data export',
       permission: 'data-sm'
     },
+    {
+      text: 'Archive Stat',
+      icon: <ScienceIcon />,
+      path: '/archive-stat',
+      description: 'ARCHIVESTAT device queues',
+      permission: 'devices'
+    },
+    {
+      text: 'Command Center',
+      icon: <SatelliteIcon />,
+      path: '/command-center',
+      description: 'Send commands to devices',
+      permission: 'devices'
+    },
     { 
       text: 'Offline Demo', 
       icon: <ScienceIcon />, 

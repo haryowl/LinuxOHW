@@ -106,13 +106,32 @@ class WebSocketHandler {
         }
     }
 
+    broadcast(topic, data) {
+        if (!this.wss) {
+            return;
+        }
+
+        const message = JSON.stringify({
+            type: 'broadcast',
+            topic,
+            data
+        });
+
+        this.wss.clients.forEach(client => {
+            if (client.readyState === WebSocket.OPEN) {
+                client.send(message);
+            }
+        });
+    }
+
     broadcastDeviceData(deviceId, data) {
         const clients = this.clients.get(deviceId);
         if (clients) {
             const message = JSON.stringify({
                 type: 'deviceData',
                 deviceId,
-                data
+                data,
+                topic: data?.topic
             });
 
             clients.forEach(client => {

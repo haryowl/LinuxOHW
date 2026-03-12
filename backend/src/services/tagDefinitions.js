@@ -27,6 +27,26 @@ const tagDefinitions = {
         description: 'Identifier of the device'
     },
 
+    // Command Tags
+    '0xE0': {
+        name: 'Command Number',
+        type: 'uint32',
+        length: 4,
+        description: 'Command identifier'
+    },
+    '0xE1': {
+        name: 'Command Text/Reply',
+        type: 'string',
+        length: null,
+        description: 'Command text or reply string'
+    },
+    '0xEB': {
+        name: 'Command Binary Data',
+        type: 'bytes',
+        length: null,
+        description: 'Command reply binary payload'
+    },
+
     // Archive and Time Information
     '0x10': {
         name: 'Archive Record Number',
@@ -499,7 +519,10 @@ const tagDefinitions = {
         type: 'uint32',
         length: 4,
         description: 'Total Milleage GPS'
-    }
+    },
+	'0xe0': { type: 'uint32', length: 4, description: 'Command identifier' },
+'0xe1': { type: 'string', length: null, description: 'Command text or reply string' },
+'0xeb': { type: 'bytes', length: null, description: 'Command reply binary payload' }
 };
 
 module.exports = tagDefinitions;

@@ -8,6 +8,122 @@ const { requireAuth } = require('./auth');
 const { filterDevicesByPermission } = require('../middleware/permissions');
 const logger = require('../utils/logger');
 
+function buildMergeKey(record) {
+    const deviceImei = record.deviceImei || '';
+    const keyParts = [deviceImei];
+
+    if (record.recordNumber !== null && record.recordNumber !== undefined) {
+        keyParts.push(`r:${record.recordNumber}`);
+    }
+
+    if (record.datetime) {
+        const ts = new Date(record.datetime).getTime();
+        keyParts.push(`d:${isNaN(ts) ? record.datetime : ts}`);
+    }
+
+    if (record.milliseconds !== null && record.milliseconds !== undefined) {
+        keyParts.push(`ms:${record.milliseconds}`);
+    }
+
+    if (record.id !== null && record.id !== undefined) {
+        keyParts.push(`i:${record.id}`);
+    }
+
+    return keyParts.join('|');
+}
+
+function mergeRecords(records) {
+    const merged = new Map();
+    for (const item of records) {
+        const row = typeof item.toJSON === 'function' ? item.toJSON() : item;
+        const key = buildMergeKey(row);
+        if (!merged.has(key)) {
+            merged.set(key, { ...row });
+            continue;
+        }
+        const existing = merged.get(key);
+        for (const [field, value] of Object.entries(row)) {
+            if ((existing[field] === null || existing[field] === undefined) && value !== null && value !== undefined) {
+                existing[field] = value;
+            }
+        }
+    }
+    return Array.from(merged.values());
+}
+
+async function getAccessibleDeviceImeis(req) {
+    const user = req.user;
+    if (!user) {
+        return [];
+    }
+
+    if (user.role === 'admin') {
+        const devices = await Device.findAll({ attributes: ['imei'] });
+        return devices.map(device => device.imei);
+    }
+
+    const permissions = req.userPermissions || user.permissions || {};
+    const accessibleDeviceImeis = new Set();
+
+    if (permissions.devices && permissions.devices.length > 0) {
+        permissions.devices.forEach(imei => accessibleDeviceImeis.add(imei));
+    }
+
+    if (permissions.deviceGroups && permissions.deviceGroups.length > 0) {
+        const deviceGroups = await DeviceGroup.findAll({
+            where: { id: permissions.deviceGroups },
+            include: ['devices']
+        });
+        for (const group of deviceGroups) {
+            if (group.devices) {
+                group.devices.forEach(device => accessibleDeviceImeis.add(device.imei));
+            }
+        }
+    }
+
+    const userDeviceAccess = await UserDeviceAccess.findAll({
+        where: {
+            userId: user.userId,
+            isActive: true
+        },
+        include: [
+            {
+                model: Device,
+                as: 'device',
+                attributes: ['imei']
+            }
+        ]
+    });
+
+    for (const access of userDeviceAccess) {
+        if (access.device) {
+            accessibleDeviceImeis.add(access.device.imei);
+        }
+    }
+
+    const userGroupAccess = await UserDeviceGroupAccess.findAll({
+        where: {
+            userId: user.userId,
+            isActive: true
+        },
+        include: [
+            {
+                model: DeviceGroup,
+                as: 'group',
+                include: ['devices']
+            }
+        ]
+    });
+
+    for (const access of userGroupAccess) {
+        if (access.group && access.group.devices) {
+            access.group.devices.forEach(device => accessibleDeviceImeis.add(device.imei));
+        }
+    }
+
+    return Array.from(accessibleDeviceImeis);
+}
+
 // Get records with optional date filtering - WITH USER PERMISSIONS
 router.get('/', requireAuth, filterDevicesByPermission, async (req, res) => {
     try {
@@ -162,30 +278,60 @@ router.get('/', requireAuth, filterDevicesByPermission, async (req, res) => {
         logger.debug('Records query parameters', { range: range || 'custom', limit: queryLimit });
         const dbStart = Date.now();
         
+        const desiredAttributes = [
+            'id', 'deviceImei', 'timestamp', 'datetime', 'recordNumber', 'milliseconds',
+            'latitude', 'longitude', 'altitude', 'speed', 'course', 'satellites', 'hdop', 'direction',
+            'status', 'supplyVoltage', 'batteryVoltage', 'temperature', 'acceleration',
+            'outputs', 'inputs', 'input0', 'input1', 'input2', 'input3',
+            'inputVoltage0', 'inputVoltage1', 'inputVoltage2', 'inputVoltage3',
+            'inputVoltage4', 'inputVoltage5', 'inputVoltage6',
+            'userData0', 'userData1', 'userData2', 'userData3', 'userData4', 'userData5', 'userData6', 'userData7',
+            'modbus0', 'modbus1', 'modbus2', 'modbus3', 'modbus4', 'modbus5', 'modbus6', 'modbus7',
+            'modbus8', 'modbus9', 'modbus10', 'modbus11', 'modbus12', 'modbus13', 'modbus14', 'modbus15'
+        ];
+        const availableAttributes = desiredAttributes.filter(attr => Record.rawAttributes[attr]);
+
         const records = await Record.findAll({
             where,
             order: [['datetime', 'DESC']],
             limit: queryLimit,
-            // Add attributes to reduce data transfer - include important GPS fields and timestamp
-            attributes: ['id', 'deviceImei', 'timestamp', 'datetime', 'latitude', 'longitude', 'altitude', 'speed', 'course', 'satellites', 'hdop', 'direction', 'status', 'supplyVoltage', 'batteryVoltage', 'forwarded', 'userData0', 'userData1', 'userData2', 'modbus0']
+            attributes: availableAttributes
         });
         
+        const shouldMerge = req.query.merge === '1' || req.query.merge === 'true';
+        const outputRecords = shouldMerge ? mergeRecords(records) : records;
+
         const dbTime = Date.now() - dbStart;
         const totalTime = Date.now() - requestStart;
         
         logger.info('Records query completed', { 
             dbTime: `${dbTime}ms`, 
             totalTime: `${totalTime}ms`,
-            recordsCount: records.length 
+            recordsCount: outputRecords.length,
+            merged: shouldMerge
         });
-        
-        res.json(records);
+
+        res.json(outputRecords);
     } catch (error) {
         logger.error('Error fetching records:', error);
         res.status(500).json({ 
             error: 'Failed to fetch records', 
             details: error.message, 
             stack: error.stack 
+        });
+    }
+});
+
+// Get available IMEIs for Data Export filtering
+router.get('/imeis', requireAuth, filterDevicesByPermission, async (req, res) => {
+    try {
+        const imeis = await getAccessibleDeviceImeis(req);
+        res.json(imeis);
+    } catch (error) {
+        logger.error('Error fetching available IMEIs:', error);
+        res.status(500).json({
+            error: 'Failed to fetch available IMEIs',
+            details: error.message
         });
     }
 });
@@ -220,7 +366,7 @@ router.get('/device/:imei', async (req, res) => {
 });
 
 // Export records
-router.post('/export', async (req, res) => {
+router.post('/export', requireAuth, filterDevicesByPermission, async (req, res) => {
     try {
         const { startDate, endDate, format, fields, imeis } = req.body;
         const where = {};
@@ -232,11 +378,18 @@ router.post('/export', async (req, res) => {
             };
         }
         
-        // Add IMEI filtering if provided
+        // Add IMEI filtering if provided, respecting user permissions
         if (imeis && imeis.length > 0) {
-            where.deviceImei = {
-                [Op.in]: imeis
-            };
+            if (req.user.role === 'admin') {
+                where.deviceImei = { [Op.in]: imeis };
+            } else {
+                const accessibleImeis = await getAccessibleDeviceImeis(req);
+                const filteredImeis = imeis.filter(imei => accessibleImeis.includes(imei));
+                where.deviceImei = { [Op.in]: filteredImeis };
+            }
+        } else if (req.user.role !== 'admin') {
+            const accessibleImeis = await getAccessibleDeviceImeis(req);
+            where.deviceImei = { [Op.in]: accessibleImeis.length > 0 ? accessibleImeis : [] };
         }
         
         // Include all possible fields in the query to ensure they're available for export
@@ -256,8 +409,8 @@ router.post('/export', async (req, res) => {
             attributes: allFields,
             order: [['datetime', 'DESC']] // Order by device datetime instead of server timestamp
         });
-        
-        const data = records.map(r => r.toJSON());
+
+        const data = mergeRecords(records);
         const selectedData = data.map(row => {
             const filtered = {};
             fields.forEach(field => {
@@ -441,11 +594,12 @@ router.post('/export-sm', requireAuth, filterDevicesByPermission, async (req, re
             attributes: allFields,
             order: [['datetime', 'DESC']]
         });
-        
-        logger.debug('Records found for export', { count: records.length });
+
+        const mergedRecords = mergeRecords(records);
+        logger.debug('Records found for export', { count: records.length, mergedCount: mergedRecords.length });
         
         // Filter out records that only have IMEI and timestamp (no meaningful data)
-        const filteredRecords = records.filter(record => {
+        const filteredRecords = mergedRecords.filter(record => {
             const hasGPS = record.latitude !== null && record.latitude !== undefined && 
                           record.longitude !== null && record.longitude !== undefined;
             const hasAltitude = record.altitude !== null && record.altitude !== undefined;

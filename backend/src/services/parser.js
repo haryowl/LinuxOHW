@@ -1,7 +1,8 @@
-﻿// backend/src/services/parser.js
+// backend/src/services/parser.js
 
 const EventEmitter = require('events');
 const tagDefinitions = require('./tagDefinitions');
+const iconv = require('iconv-lite');
 const logger = require('../utils/logger');
 const config = require('../config');
 const PacketTypeHandler = require('./packetTypeHandler');
@@ -135,6 +136,26 @@ class GalileoskyParser extends EventEmitter {
             await this.processBatch();
         }
     }
+
+    getCommandReply(record, connectionAddress) {
+        if (!record?.tags) {
+            return null;
+        }
+        const commandNumber = record.tags['0xe0']?.value;
+        const replyText = record.tags['0xe1']?.value || null;
+        const replyDataHex = record.tags['0xeb']?.value || null;
+        const imeiFromTag = record.tags['0x03']?.value;
+        const imei = imeiFromTag || this.getIMEI(connectionAddress);
+        if (!imei) {
+            return null;
+        }
+        return {
+            imei,
+            commandNumber: typeof commandNumber === 'number' ? commandNumber : null,
+            replyText,
+            replyDataHex
+        };
+    }
     // Method to get IMEI for a specific connection
     getIMEI(connectionAddress) {
         return this.imeiByConnection.get(connectionAddress) || null;
@@ -242,9 +263,9 @@ class GalileoskyParser extends EventEmitter {
     }
 
     initializeCaches() {
-        // Cache tag definitions
+        // Cache tag definitions (normalize to lowercase keys)
         for (const [tag, definition] of Object.entries(tagDefinitions)) {
-            this.tagDefinitionsCache.set(tag, definition);
+            this.tagDefinitionsCache.set(String(tag).toLowerCase(), definition);
         }
         
         // Pre-calculate binary strings for 0-65535
@@ -389,6 +410,13 @@ class GalileoskyParser extends EventEmitter {
                 // Single record for small packets
                 const record = this.parseRecord(buffer, currentOffset, endOffset, connectionAddress);
                 if (Object.keys(record.tags).length > 0) {
+                    if (record.isCommandReply) {
+                        const reply = this.getCommandReply(record, connectionAddress);
+                        if (reply) {
+                            this.emit('commandReply', reply);
+                        }
+                        return result;
+                    }
                     result.records.push(record);
                     // Save record if IMEI is available for this connection
                     const imei = this.getIMEI(connectionAddress);
@@ -410,6 +438,18 @@ class GalileoskyParser extends EventEmitter {
                     }
                 }
             } else {
+                // Command reply packets start with tag 0x03 (IMEI) and should be parsed as a single record
+                if (buffer.readUInt8(currentOffset) === 0x03) {
+                    const record = this.parseRecord(buffer, currentOffset, endOffset, connectionAddress);
+                    if (Object.keys(record.tags).length > 0 && record.isCommandReply) {
+                        const reply = this.getCommandReply(record, connectionAddress);
+                        if (reply) {
+                            this.emit('commandReply', reply);
+                        }
+                    }
+                    return result;
+                }
+
                 // For packets >= 32 bytes, detect multiple records by looking for record start markers
                 // Different devices use different formats:
                 // - Some start with 0x10 (Archive Record Number) followed by 0x20 (Date Time)
@@ -441,23 +481,30 @@ class GalileoskyParser extends EventEmitter {
                 searchOffset = currentOffset;
                 
                 if (recordStartsWith10) {
-                    // Records start with 0x10 tag - find all 0x10 occurrences
+                    const isRecordStart = (offset) => {
+                        if (offset + 3 >= endOffset) {
+                            return false;
+                        }
+                        return buffer.readUInt8(offset) === 0x10 && buffer.readUInt8(offset + 3) === 0x20;
+                    };
+
+                    // Records start with 0x10 tag followed by 0x20 - find valid record starts
                     let recordStart = currentOffset;
-                    while (recordStart < endOffset - 2) {
-                        if (buffer.readUInt8(recordStart) !== 0x10) {
+                    while (recordStart < endOffset - 3) {
+                        if (!isRecordStart(recordStart)) {
                             recordStart++;
                             continue;
                         }
-                        
-                        // Find the end of this record (next 0x10 tag or end of packet)
+
+                        // Find the end of this record (next valid record start or end of packet)
                         let recordEnd = recordStart + 1;
                         while (recordEnd < endOffset) {
-                            if (buffer.readUInt8(recordEnd) === 0x10 && recordEnd > recordStart + 1) {
+                            if (recordEnd > recordStart + 3 && isRecordStart(recordEnd)) {
                                 break;
                             }
                             recordEnd++;
                         }
-                        
+
                         recordBoundaries.push({ start: recordStart, end: recordEnd });
                         recordStart = recordEnd;
                     }
@@ -513,6 +560,13 @@ class GalileoskyParser extends EventEmitter {
                     for (const record of parsedRecords) {
                         if (Object.keys(record.tags).length > 0) {
                             result.records.push(record);
+                            if (record.isCommandReply) {
+                                const reply = this.getCommandReply(record, connectionAddress);
+                                if (reply) {
+                                    this.emit('commandReply', reply);
+                                }
+                                continue;
+                            }
                             // Save record if IMEI is available for this connection
                             const imei = this.getIMEI(connectionAddress);
                             if (imei) {
@@ -554,6 +608,13 @@ class GalileoskyParser extends EventEmitter {
                     const record = this.parseRecord(buffer, currentOffset, endOffset, connectionAddress);
                     if (Object.keys(record.tags).length > 0) {
                         result.records.push(record);
+                        if (record.isCommandReply) {
+                            const reply = this.getCommandReply(record, connectionAddress);
+                            if (reply) {
+                                this.emit('commandReply', reply);
+                            }
+                            return result;
+                        }
                         // Save record if IMEI is available for this connection
                         const imei = this.getIMEI(connectionAddress);
                         if (imei) {
@@ -739,8 +800,8 @@ class GalileoskyParser extends EventEmitter {
                 }
                 break;
             case 'coordinates':
-                const lat = buffer.readInt32LE(offset + 1) / 10000000;
-                const lon = buffer.readInt32LE(offset + 5) / 10000000;
+                const lat = buffer.readInt32LE(offset + 1) / 1000000;
+                const lon = buffer.readInt32LE(offset + 5) / 1000000;
                 const satellites = buffer.readUInt8(offset + 8);
                 value = { latitude: lat, longitude: lon, satellites };
                 length = 9;
@@ -767,7 +828,7 @@ class GalileoskyParser extends EventEmitter {
 
     // Synchronous tag value parser
     parseTagValue(buffer, recordOffset, tagHex) {
-        const definition = this.tagDefinitionsCache.get(tagHex);
+        const definition = this.tagDefinitionsCache.get(String(tagHex).toLowerCase());
         if (!definition) {
             return { value: null, newOffset: recordOffset + 1 };
         }
@@ -1277,8 +1338,8 @@ class GalileoskyParser extends EventEmitter {
                     const record = {
                         timestamp: new Date(buffer.readUInt32LE(offset) * 1000),
                         coordinates: {
-                            latitude: buffer.readInt32LE(offset + 4) / 10000000,
-                            longitude: buffer.readInt32LE(offset + 8) / 10000000
+                            latitude: buffer.readInt32LE(offset + 4) / 1000000,
+                            longitude: buffer.readInt32LE(offset + 8) / 1000000
                         },
                         speed: buffer.readUInt16LE(offset + 12) / 10,
                         course: buffer.readUInt16LE(offset + 14) / 10,
@@ -1373,77 +1434,84 @@ class GalileoskyParser extends EventEmitter {
                 throw new Error(`Invalid IMEI value: ${imei}`);
             }
 
+            const tags = record.tags || {};
+            const getTag = (key) => {
+                if (!key) return undefined;
+                const lower = key.toLowerCase();
+                return tags[lower] || tags[key] || tags[key.toUpperCase().replace('0X', '0x')];
+            };
+
             // Extract input states from the inputs tag
-            const inputsTag = record.tags['0x46'];
+            const inputsTag = getTag('0x46');
             const inputStates = inputsTag?.value?.states || {};
 
             // Extract output states from the outputs tag
-            const outputsTag = record.tags['0x45'];
+            const outputsTag = getTag('0x45');
             const outputStates = outputsTag?.value?.states || {};
 
             const recordData = {
                 deviceImei: imei,
                 timestamp: new Date(), // Server timestamp when record was received
-                datetime: record.tags['0x20']?.value || null, // Device datetime from tag 0x20
-                recordNumber: record.tags['0x10']?.value,
-                milliseconds: record.tags['0x21']?.value,
-                latitude: record.tags['0x30']?.value?.latitude,
-                longitude: record.tags['0x30']?.value?.longitude,
-                satellites: record.tags['0x30']?.value?.satellites,
-                coordinateCorrectness: record.tags['0x30']?.value?.correctness,
-                speed: record.tags['0x33']?.value?.speed,
-                direction: record.tags['0x33']?.value?.direction,
-                altitude: record.tags['0x34']?.value,
-                hdop: record.tags['0x35']?.value,
-                status: record.tags['0x40']?.value,
-                supplyVoltage: record.tags['0x41']?.value,
-                batteryVoltage: record.tags['0x42']?.value,
-                temperature: record.tags['0x43']?.value,
-                acceleration: record.tags['0x44']?.value,
-                outputs: record.tags['0x45']?.value,
-                inputs: record.tags['0x46']?.value,
-                ecoDriving: record.tags['0x47']?.value,
-                expandedStatus: record.tags['0x48']?.value,
-                transmissionChannel: record.tags['0x49']?.value,
+                datetime: getTag('0x20')?.value || null, // Device datetime from tag 0x20
+                recordNumber: getTag('0x10')?.value,
+                milliseconds: getTag('0x21')?.value,
+                latitude: getTag('0x30')?.value?.latitude,
+                longitude: getTag('0x30')?.value?.longitude,
+                satellites: getTag('0x30')?.value?.satellites,
+                coordinateCorrectness: getTag('0x30')?.value?.correctness,
+                speed: getTag('0x33')?.value?.speed,
+                direction: getTag('0x33')?.value?.direction,
+                altitude: getTag('0x34')?.value,
+                hdop: getTag('0x35')?.value,
+                status: getTag('0x40')?.value,
+                supplyVoltage: getTag('0x41')?.value,
+                batteryVoltage: getTag('0x42')?.value,
+                temperature: getTag('0x43')?.value,
+                acceleration: getTag('0x44')?.value,
+                outputs: getTag('0x45')?.value,
+                inputs: getTag('0x46')?.value,
+                ecoDriving: getTag('0x47')?.value,
+                expandedStatus: getTag('0x48')?.value,
+                transmissionChannel: getTag('0x49')?.value,
                 // Input states - map from the inputs tag states
                 input0: inputStates.input0 || false,
                 input1: inputStates.input1 || false,
                 input2: inputStates.input2 || false,
                 input3: inputStates.input3 || false,
                 // Input voltages
-                inputVoltage0: record.tags['0x50']?.value,
-                inputVoltage1: record.tags['0x51']?.value,
-                inputVoltage2: record.tags['0x52']?.value,
-                inputVoltage3: record.tags['0x53']?.value,
-                inputVoltage4: record.tags['0x54']?.value,
-                inputVoltage5: record.tags['0x55']?.value,
-                inputVoltage6: record.tags['0x56']?.value,
+                inputVoltage0: getTag('0x50')?.value,
+                inputVoltage1: getTag('0x51')?.value,
+                inputVoltage2: getTag('0x52')?.value,
+                inputVoltage3: getTag('0x53')?.value,
+                inputVoltage4: getTag('0x54')?.value,
+                inputVoltage5: getTag('0x55')?.value,
+                inputVoltage6: getTag('0x56')?.value,
                 // User data
-                userData0: record.tags['0xe2']?.value?.toString() || null,
-                userData1: record.tags['0xe3']?.value?.toString() || null,
-                userData2: record.tags['0xe4']?.value?.toString() || null,
-                userData3: record.tags['0xe5']?.value?.toString() || null,
-                userData4: record.tags['0xe6']?.value?.toString() || null,
-                userData5: record.tags['0xe7']?.value?.toString() || null,
-                userData6: record.tags['0xe8']?.value?.toString() || null,
-                userData7: record.tags['0xe9']?.value?.toString() || null,
+                userData0: getTag('0xe2')?.value?.toString() || null,
+                userData1: getTag('0xe3')?.value?.toString() || null,
+                userData2: getTag('0xe4')?.value?.toString() || null,
+                userData3: getTag('0xe5')?.value?.toString() || null,
+                userData4: getTag('0xe6')?.value?.toString() || null,
+                userData5: getTag('0xe7')?.value?.toString() || null,
+                userData6: getTag('0xe8')?.value?.toString() || null,
+                userData7: getTag('0xe9')?.value?.toString() || null,
                 // Modbus data
-                modbus0: record.tags['0x0001']?.value?.toString() || null,
-                modbus1: record.tags['0x0002']?.value?.toString() || null,
-                modbus2: record.tags['0x0003']?.value?.toString() || null,
-                modbus3: record.tags['0x0004']?.value?.toString() || null,
-                modbus4: record.tags['0x0005']?.value?.toString() || null,
-                modbus5: record.tags['0x0006']?.value?.toString() || null,
-                modbus6: record.tags['0x0007']?.value?.toString() || null,
-                modbus7: record.tags['0x0008']?.value?.toString() || null,
-                modbus8: record.tags['0x0009']?.value?.toString() || null,
-                modbus9: record.tags['0x000a']?.value?.toString() || null,
-                modbus10: record.tags['0x000b']?.value?.toString() || null,
-                modbus11: record.tags['0x000c']?.value?.toString() || null,
-                modbus12: record.tags['0x000d']?.value?.toString() || null,
-                modbus13: record.tags['0x000e']?.value?.toString() || null,
-                modbus14: record.tags['0x000f']?.value?.toString() || null,
-                modbus15: record.tags['0x0010']?.value?.toString() || null,
+                modbus0: getTag('0x0001')?.value?.toString() || null,
+                modbus1: getTag('0x0002')?.value?.toString() || null,
+                modbus2: getTag('0x0003')?.value?.toString() || null,
+                modbus3: getTag('0x0004')?.value?.toString() || null,
+                modbus4: getTag('0x0005')?.value?.toString() || null,
+                modbus5: getTag('0x0006')?.value?.toString() || null,
+                modbus6: getTag('0x0007')?.value?.toString() || null,
+                modbus7: getTag('0x0008')?.value?.toString() || null,
+                modbus8: getTag('0x0009')?.value?.toString() || null,
+                modbus9: getTag('0x000a')?.value?.toString() || null,
+                modbus10: getTag('0x000b')?.value?.toString() || null,
+                modbus11: getTag('0x000c')?.value?.toString() || null,
+                modbus12: getTag('0x000d')?.value?.toString() || null,
+                modbus13: getTag('0x000e')?.value?.toString() || null,
+                modbus14: getTag('0x000f')?.value?.toString() || null,
+                modbus15: getTag('0x0010')?.value?.toString() || null,
                 rawData: JSON.stringify(record.tags)
             };
 
@@ -1493,7 +1561,7 @@ class GalileoskyParser extends EventEmitter {
                             
                             const extendedTag = buffer.readUInt16BE(recordOffset);
                             recordOffset += 2;
-                            const tagHex = `0x${extendedTag.toString(16).padStart(4, '0')}`;
+                            const tagHex = `0x${extendedTag.toString(16).padStart(4, '0')}`.toLowerCase();
                             const { value, newOffset, definition } = this.parseTagValue(buffer, recordOffset, tagHex);
 
                             if (value !== null && definition) {
@@ -1540,8 +1608,82 @@ class GalileoskyParser extends EventEmitter {
                 }
             } else {
                 // Handle regular 1-byte tags
-                const tagHex = `0x${tag.toString(16).padStart(2, '0')}`;
-                const { value, newOffset, definition } = this.parseTagValue(buffer, recordOffset, tagHex);
+                const tagHex = `0x${tag.toString(16).padStart(2, '0')}`.toLowerCase();
+                const definition = this.tagDefinitionsCache.get(tagHex);
+
+                // Handle command number tag with variable length (2 or 4 bytes)
+                if (tagHex === '0xe0') {
+                    const remainingLength = endOffset - recordOffset;
+                    if (remainingLength >= 2) {
+                        const nextTagAfter2 = remainingLength >= 3 ? buffer.readUInt8(recordOffset + 2) : null;
+                        const nextTagAfter4 = remainingLength >= 5 ? buffer.readUInt8(recordOffset + 4) : null;
+                        let value;
+                        let length;
+
+                        if (nextTagAfter2 === 0xE1 || nextTagAfter2 === 0xEB) {
+                            value = buffer.readUInt16LE(recordOffset);
+                            length = 2;
+                        } else if (nextTagAfter4 === 0xE1 || nextTagAfter4 === 0xEB) {
+                            value = buffer.readUInt32LE(recordOffset);
+                            length = 4;
+                        } else if (remainingLength >= 4) {
+                            value = buffer.readUInt32LE(recordOffset);
+                            length = 4;
+                        } else {
+                            value = buffer.readUInt16LE(recordOffset);
+                            length = 2;
+                        }
+
+                        record.tags[tagHex] = {
+                            value,
+                            type: definition?.type || (length === 4 ? 'uint32' : 'uint16'),
+                            description: definition?.description
+                        };
+                        parsedTags.push(tagHex);
+                        recordOffset += length;
+                        continue;
+                    }
+                }
+
+                // Handle command text tag with length byte (0xE1)
+                if (tagHex === '0xe1') {
+                    const remainingLength = endOffset - recordOffset;
+                    if (remainingLength >= 1) {
+                        const textLength = buffer.readUInt8(recordOffset);
+                        const available = Math.min(textLength, remainingLength - 1);
+                        const textSlice = buffer.slice(recordOffset + 1, recordOffset + 1 + available);
+                        const value = iconv.decode(textSlice, 'cp1251');
+                        record.tags[tagHex] = {
+                            value,
+                            type: definition?.type || 'string',
+                            description: definition?.description
+                        };
+                        parsedTags.push(tagHex);
+                        recordOffset += 1 + available;
+                        continue;
+                    }
+                }
+
+                // Handle binary reply tag with length byte (0xEB)
+                if (tagHex === '0xeb') {
+                    const remainingLength = endOffset - recordOffset;
+                    if (remainingLength >= 1) {
+                        const dataLength = buffer.readUInt8(recordOffset);
+                        const available = Math.min(dataLength, remainingLength - 1);
+                        const dataSlice = buffer.slice(recordOffset + 1, recordOffset + 1 + available);
+                        const value = dataSlice.toString('hex').toUpperCase();
+                        record.tags[tagHex] = {
+                            value,
+                            type: definition?.type || 'bytes',
+                            description: definition?.description
+                        };
+                        parsedTags.push(tagHex);
+                        recordOffset += 1 + available;
+                        continue;
+                    }
+                }
+
+                const { value, newOffset } = this.parseTagValue(buffer, recordOffset, tagHex);
 
                 if (value !== null && definition) {
                     record.tags[tagHex] = {
@@ -1570,6 +1712,11 @@ class GalileoskyParser extends EventEmitter {
                 // Advance offset by the correct value length (from parseTagValue)
                 recordOffset = newOffset;
             }
+        }
+
+        // Detect command reply records and mark them
+        if (record.tags['0xe0'] && (record.tags['0xe1'] || record.tags['0xeb'])) {
+            record.isCommandReply = true;
         }
 
         // Log the parsed tags for debugging

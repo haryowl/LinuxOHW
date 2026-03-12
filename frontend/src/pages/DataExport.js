@@ -101,12 +101,26 @@ const DataExport = () => {
     'Modbus Data': ['modbus0', 'modbus1', 'modbus2', 'modbus3', 'modbus4', 'modbus5', 'modbus6', 'modbus7', 'modbus8', 'modbus9', 'modbus10', 'modbus11', 'modbus12', 'modbus13', 'modbus14', 'modbus15']
   };
 
+  const toStartOfDayIso = (dateStr) => {
+    const date = new Date(dateStr);
+    date.setHours(0, 0, 0, 0);
+    return date.toISOString();
+  };
+
+  const toEndOfDayIso = (dateStr) => {
+    const date = new Date(dateStr);
+    date.setHours(23, 59, 59, 999);
+    return date.toISOString();
+  };
+
   const fetchData = async () => {
     setLoading(true);
     try {
       const params = {
-        startDate: new Date(startDate).toISOString(),
-        endDate: new Date(endDate).toISOString(),
+        startDate: toStartOfDayIso(startDate),
+        endDate: toEndOfDayIso(endDate),
+        merge: '1',
+        limit: 1000,
       };
       
       // Add IMEI filtering if selected
@@ -114,7 +128,10 @@ const DataExport = () => {
         params.imeis = selectedImeis.join(',');
       }
       
-      const response = await axios.get(`${BASE_URL}/api/records`, { params });
+      const response = await axios.get(`${BASE_URL}/api/records`, { 
+        params,
+        withCredentials: true
+      });
       setRecords(response.data);
     } catch (error) {
       console.error('Error fetching data:', error);
@@ -125,7 +142,9 @@ const DataExport = () => {
   const fetchAvailableImeis = async () => {
     setImeiLoading(true);
     try {
-      const response = await axios.get(`${BASE_URL}/api/records/imeis`);
+      const response = await axios.get(`${BASE_URL}/api/records/imeis`, {
+        withCredentials: true
+      });
       setAvailableImeis(response.data);
     } catch (error) {
       console.error('Error fetching IMEIs:', error);
@@ -146,8 +165,8 @@ const DataExport = () => {
       const response = await axios.post(
         `${BASE_URL}/api/records/export`,
         {
-          startDate: new Date(startDate).toISOString(),
-          endDate: new Date(endDate).toISOString(),
+          startDate: toStartOfDayIso(startDate),
+          endDate: toEndOfDayIso(endDate),
           format: exportFormat,
           fields: Object.entries(selectedFields)
             .filter(([_, selected]) => selected)
@@ -156,6 +175,7 @@ const DataExport = () => {
         },
         {
           responseType: 'blob',
+          withCredentials: true,
         }
       );
 
@@ -232,7 +252,7 @@ const DataExport = () => {
               >
                 <MenuItem value="csv">CSV</MenuItem>
                 <MenuItem value="json">JSON</MenuItem>
-                <MenuItem value="xlsx">Excel</MenuItem>
+                <MenuItem value="excel">Excel</MenuItem>
               </Select>
             </FormControl>
           </Grid>
@@ -343,12 +363,14 @@ const DataExport = () => {
                     .map(([field]) => (
                       <TableCell key={field}>
                         {field === 'timestamp' || field === 'datetime'
-                          ? record[field] 
+                          ? record[field]
                             ? new Date(record[field]).toLocaleString()
                             : 'N/A'
+                          : typeof record[field] === 'boolean'
+                          ? (record[field] ? 'ON' : 'OFF')
                           : typeof record[field] === 'object'
                           ? JSON.stringify(record[field])
-                          : record[field]}
+                          : (record[field] === null || record[field] === undefined ? 'N/A' : record[field])}
                       </TableCell>
                     ))}
                 </TableRow>

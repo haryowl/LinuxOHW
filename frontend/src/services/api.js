@@ -222,6 +222,43 @@ export async function apiFetchDeviceGroups() {
   }
 }
 
+// Device Commands API Functions
+export async function apiFetchCommandList() {
+  const response = await authenticatedFetch(`${BASE_URL}/api/device-commands/command-list`);
+  return response;
+}
+
+export async function apiFetchCommandPresets(deviceId) {
+  const response = await authenticatedFetch(`${BASE_URL}/api/device-commands/${deviceId}/presets`);
+  return response;
+}
+
+export async function apiFetchCommandHistory(deviceId) {
+  const response = await authenticatedFetch(`${BASE_URL}/api/device-commands/${deviceId}/history`);
+  return response;
+}
+
+export async function apiSendDeviceCommand(deviceId, payload) {
+  const response = await authenticatedFetch(`${BASE_URL}/api/device-commands/${deviceId}/send`, {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+  return response;
+}
+
+export async function apiSendDeviceCommandsBulk(deviceIds, payload) {
+  const response = await authenticatedFetch(`${BASE_URL}/api/device-commands/send-bulk`, {
+    method: 'POST',
+    body: JSON.stringify({ deviceIds, ...payload })
+  });
+  return response;
+}
+
+export async function apiFetchArchiveStats() {
+  const response = await authenticatedFetch(`${BASE_URL}/api/device-commands/archivestat`);
+  return response;
+}
+
 export async function apiCreateDeviceGroup(groupData) {
   try {
     const response = await authenticatedFetch(`${BASE_URL}/api/device-groups`, {

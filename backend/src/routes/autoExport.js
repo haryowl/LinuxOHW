@@ -43,6 +43,8 @@ function saveConfigs() {
             jobId,
             type: config.type,
             time: config.time,
+            times: config.times, // Support multiple times
+            hoursBack: config.hoursBack, // Time range configuration
             devices: config.devices,
             fields: config.fields,
             customHeaders: config.customHeaders
@@ -59,87 +61,162 @@ function saveConfigs() {
 const savedConfigs = loadConfigs();
 savedConfigs.forEach(config => {
     if (config.type === 'data-sm') {
-        // Parse time and recreate cron job
-        const [hour, minute] = config.time.split(':').map(Number);
-        const cronExpression = `${minute} ${hour} * * *`;
+        // Support both old format (single time) and new format (multiple times)
+        const times = config.times || (config.time ? [config.time] : []);
+        const hoursBack = config.hoursBack || 24; // Default to 24 hours (yesterday)
         
-        const job = cron.schedule(cronExpression, async () => {
-            await performDataSMAutoExport(config.devices, config.fields, config.customHeaders, config.jobId);
-        }, {
-            scheduled: true,
-            timezone: "UTC"
-        });
-        
-        autoExportConfigs.set(config.jobId, {
-            type: config.type,
-            time: config.time,
-            devices: config.devices,
-            fields: config.fields,
-            customHeaders: config.customHeaders,
-            job
-        });
-        
-        logger.info('Restored auto-export job', { jobId: config.jobId, time: config.time });
-    }
-});
-
-
-// Configure auto-export for Data SM
-// Configure auto-export for Data SM
-router.post('/sm', async (req, res) => {
-    try {
-        const { enabled, time, devices, fields, customHeaders } = req.body;
-        
-        logger.info('Auto-export request received', {
-            enabled,
-            time,
-            devicesCount: devices?.length || 0,
-            fieldsCount: fields?.length || 0
-        });
-        
-        if (enabled) {
-            // Parse time (format: "HH:MM")
+        // Create a cron job for each time
+        const jobs = [];
+        times.forEach(time => {
             const [hour, minute] = time.split(':').map(Number);
-            
-            logger.debug('Parsed time for auto-export', { hour, minute, originalTime: time });
-            
-            // Schedule the cron job
-            const cronExpression = `${minute} ${hour} * * *`; // Daily at specified time
-            
-            const jobId = `data-sm-${Date.now()}`;
+            const cronExpression = `${minute} ${hour} * * *`;
             
             const job = cron.schedule(cronExpression, async () => {
-                await performDataSMAutoExport(devices, fields, customHeaders);
+                await performDataSMAutoExport(
+                    config.devices, 
+                    config.fields, 
+                    config.customHeaders, 
+                    config.jobId,
+                    hoursBack
+                );
             }, {
                 scheduled: true,
                 timezone: "UTC"
             });
             
+            jobs.push({ time, job });
+        });
+        
+        autoExportConfigs.set(config.jobId, {
+            type: config.type,
+            time: times[0] || '00:00', // Keep for backward compatibility
+            times: times,
+            hoursBack: hoursBack,
+            devices: config.devices,
+            fields: config.fields,
+            customHeaders: config.customHeaders,
+            jobs: jobs // Array of jobs
+        });
+        
+        logger.info('Restored auto-export job', { 
+            jobId: config.jobId, 
+            times: times,
+            hoursBack: hoursBack 
+        });
+    }
+});
+
+
+// Configure auto-export for Data SM
+// Enhanced to support multiple schedules per day and configurable time range
+router.post('/sm', async (req, res) => {
+    try {
+        const { enabled, time, times, hoursBack, devices, fields, customHeaders } = req.body;
+        
+        logger.info('Auto-export request received', {
+            enabled,
+            time,
+            times,
+            hoursBack,
+            devicesCount: devices?.length || 0,
+            fieldsCount: fields?.length || 0
+        });
+        
+        if (enabled) {
+            // Support both old format (single time) and new format (multiple times)
+            const exportTimes = times || (time ? [time] : ['00:00']);
+            const timeRange = hoursBack || 24; // Default to 24 hours if not specified
+            
+            // Validate hoursBack (must be between 1 and 168 hours = 7 days)
+            if (timeRange < 1 || timeRange > 168) {
+                return res.status(400).json({ 
+                    error: 'Time range (hoursBack) must be between 1 and 168 hours (7 days)' 
+                });
+            }
+            
+            // Stop and remove all existing data-sm jobs
+            for (const [jobId, config] of autoExportConfigs.entries()) {
+                if (config.type === 'data-sm') {
+                    if (config.jobs) {
+                        config.jobs.forEach(({ job }) => job.stop());
+                    } else if (config.job) {
+                        config.job.stop(); // Backward compatibility
+                    }
+                    autoExportConfigs.delete(jobId);
+                }
+            }
+            
+            // Create new job ID
+            const jobId = `data-sm-${Date.now()}`;
+            
+            // Create a cron job for each time
+            const jobs = [];
+            exportTimes.forEach(exportTime => {
+                const [hour, minute] = exportTime.split(':').map(Number);
+                
+                if (isNaN(hour) || isNaN(minute) || hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+                    logger.warn('Invalid time format, skipping', { exportTime });
+                    return;
+                }
+                
+                const cronExpression = `${minute} ${hour} * * *`; // Daily at specified time
+                
+                const job = cron.schedule(cronExpression, async () => {
+                    await performDataSMAutoExport(devices, fields, customHeaders, jobId, timeRange);
+                }, {
+                    scheduled: true,
+                    timezone: "UTC"
+                });
+                
+                jobs.push({ time: exportTime, job });
+            });
+            
+            if (jobs.length === 0) {
+                return res.status(400).json({ error: 'No valid export times provided' });
+            }
+            
             // Store configuration
             autoExportConfigs.set(jobId, {
                 type: 'data-sm',
-                time: time || '00:00',  // Ensure time is never undefined
+                time: exportTimes[0], // Keep for backward compatibility
+                times: exportTimes,
+                hoursBack: timeRange,
                 devices,
                 fields,
                 customHeaders,
-                job
+                jobs: jobs
             });
             
-            logger.debug('Stored auto-export configuration', { jobId, time: autoExportConfigs.get(jobId).time });
+            logger.debug('Stored auto-export configuration', { 
+                jobId, 
+                times: exportTimes,
+                hoursBack: timeRange,
+                jobsCount: jobs.length
+            });
             
             // Save configs to file
             saveConfigs();
-            logger.info('Auto-export scheduled for Data SM', { time, jobId });
+            logger.info('Auto-export scheduled for Data SM', { 
+                times: exportTimes, 
+                hoursBack: timeRange,
+                jobId 
+            });
             res.json({ 
                 success: true, 
-                message: `Auto-export scheduled for Data SM at ${time} UTC`,
-                jobId 
+                message: `Auto-export scheduled for Data SM at ${exportTimes.join(', ')} UTC (${timeRange} hours back)`,
+                jobId,
+                times: exportTimes,
+                hoursBack: timeRange
             });
         } else {
             // Disable auto-export
             for (const [jobId, config] of autoExportConfigs.entries()) {
                 if (config.type === 'data-sm') {
-                    config.job.stop();
+                    if (config.jobs) {
+                        config.jobs.forEach(({ job }) => job.stop());
+                    } else if (config.job) {
+                        config.job.stop(); // Backward compatibility
+                    }
                     autoExportConfigs.delete(jobId);
                 }
             }
@@ -157,7 +234,7 @@ router.post('/sm', async (req, res) => {
 });
 
 // Get auto-export status
-// Get auto-export status
+// Enhanced to return multiple schedules and time range
 router.get('/status', async (req, res) => {
     try {
         const status = [];
@@ -178,7 +255,9 @@ router.get('/status', async (req, res) => {
             status.push({
                 jobId: latestJobId,
                 type: latestDataSMConfig.type,
-                time: latestDataSMConfig.time,
+                time: latestDataSMConfig.time, // Backward compatibility
+                times: latestDataSMConfig.times || (latestDataSMConfig.time ? [latestDataSMConfig.time] : []),
+                hoursBack: latestDataSMConfig.hoursBack || 24, // Default to 24 if not set
                 devices: latestDataSMConfig.devices,
                 enabled: true
             });
@@ -192,12 +271,14 @@ router.get('/status', async (req, res) => {
 });
 
 // Perform Data SM auto-export
-// Perform Data SM auto-export - generates separate files per device
-async function performDataSMAutoExport(devices, fields, customHeaders, jobId) {
+// Enhanced to support: 1 file per day, same filename for all schedules on same day (overwrites)
+// hoursBack represents number of days to export (each day = 24 hours)
+async function performDataSMAutoExport(devices, fields, customHeaders, jobId, hoursBack = 24) {
     logger.info('Auto-export triggered', { 
         timestamp: new Date().toISOString(),
         devicesCount: devices?.length || 0,
         fieldsCount: fields?.length || 0,
+        hoursBack: hoursBack,
         jobId 
     });
     
@@ -207,15 +288,14 @@ async function performDataSMAutoExport(devices, fields, customHeaders, jobId) {
     const generatedFiles = [];
     
     try {
-        logger.info('Starting Data SM auto-export', { mode: 'separate files per device' });
+        // Calculate number of days (hoursBack represents days, each day = 24 hours)
+        const days = Math.ceil(hoursBack / 24);
         
-        const yesterday = new Date();
-        yesterday.setDate(yesterday.getDate() - 1);
-        const startDate = new Date(yesterday.setHours(0, 0, 0, 0));
-        const endDate = new Date(yesterday.setHours(23, 59, 59, 999));
-        
-        // Generate date period (same format as manual export)
-        const dateStr = `${String(yesterday.getDate()).padStart(2, '0')}-${String(yesterday.getMonth() + 1).padStart(2, '0')}-${yesterday.getFullYear()}`;
+        logger.info('Starting Data SM auto-export', { 
+            mode: '1 file per day (24 hours each)',
+            days: days,
+            hoursBack: hoursBack
+        });
         
         // Create exports directory if it doesn't exist
         const exportsDir = path.join(__dirname, '../../exports');
@@ -226,157 +306,208 @@ async function performDataSMAutoExport(devices, fields, customHeaders, jobId) {
         // Get device information with group details (same as manual export)
         const { DeviceGroup } = require('../models');
         
-        // If no devices specified, get all devices that have records
-        let targetDevices = devices;
-        if (!targetDevices || targetDevices.length === 0) {
-            const allRecords = await Record.findAll({
-                where: {
-                    datetime: { [Op.between]: [startDate, endDate] }
-                },
-                attributes: ['deviceImei'],
-                group: ['deviceImei']
-            });
-            targetDevices = allRecords.map(record => record.deviceImei);
-        }
-        
         // Get device information for all target devices
-        const deviceRecords = await Device.findAll({
-            where: { imei: targetDevices },
-            include: [{
-                model: DeviceGroup,
-                as: 'group',
-                attributes: ['name']
-            }],
-            attributes: ['imei', 'name']
-        });
+        // If no devices specified, get all devices
+        let deviceRecords;
+        if (!devices || devices.length === 0) {
+            deviceRecords = await Device.findAll({
+                include: [{
+                    model: DeviceGroup,
+                    as: 'group',
+                    attributes: ['name']
+                }],
+                attributes: ['imei', 'name']
+            });
+        } else {
+            deviceRecords = await Device.findAll({
+                where: { imei: devices },
+                include: [{
+                    model: DeviceGroup,
+                    as: 'group',
+                    attributes: ['name']
+                }],
+                attributes: ['imei', 'name']
+            });
+        }
         
         // Process each device separately
         for (const deviceRecord of deviceRecords) {
             try {
                 const deviceImei = deviceRecord.imei;
-                
-                // Query records for this specific device
-                const records = await Record.findAll({
-                    where: {
-                        deviceImei: deviceImei,
-                        datetime: { [Op.between]: [startDate, endDate] }
-                    },
-                    order: [['datetime', 'DESC']] // Same as manual export
-                });
-                
-                // Filter out records that only have IMEI and timestamp (same as manual export)
-                const filteredRecords = records.filter(record => {
-                    const hasGPS = record.latitude !== null && record.latitude !== undefined && 
-                                  record.longitude !== null && record.longitude !== undefined;
-                    const hasAltitude = record.altitude !== null && record.altitude !== undefined;
-                    const hasSatellites = record.satellites !== null && record.satellites !== undefined;
-                    const hasSpeed = record.speed !== null && record.speed !== undefined;
-                    const hasSensorData = (record.userData0 !== null && record.userData0 !== undefined) ||
-                                        (record.userData1 !== null && record.userData1 !== undefined) ||
-                                        (record.userData2 !== null && record.userData2 !== undefined) ||
-                                        (record.modbus0 !== null && record.modbus0 !== undefined);
-                    
-                    return hasGPS || hasAltitude || hasSatellites || hasSpeed || hasSensorData;
-                });
-                
-                if (filteredRecords.length === 0) {
-                    logger.debug('No records found for device during auto-export', { deviceImei });
-                    continue;
-                }
-                
-                // Transform data with custom headers and date formatting (same as manual export)
-                const transformedData = filteredRecords.map(record => {
-                    const transformed = {};
-                    
-                    // Map each field to its custom header with proper formatting
-                    Object.keys(customHeaders).forEach(field => {
-                        switch (field) {
-                            case 'deviceImei':
-                                transformed[customHeaders[field]] = record.deviceImei;
-                                break;
-                            case 'datetime':
-                                // Format date as YYYY-MM-DD HH:MM:SS (same as manual export)
-                                if (record.datetime) {
-                                    const date = new Date(record.datetime);
-                                    const year = date.getFullYear();
-                                    const month = String(date.getMonth() + 1).padStart(2, '0');
-                                    const day = String(date.getDate()).padStart(2, '0');
-                                    const hours = String(date.getHours()).padStart(2, '0');
-                                    const minutes = String(date.getMinutes()).padStart(2, '0');
-                                    const seconds = String(date.getSeconds()).padStart(2, '0');
-                                    transformed[customHeaders[field]] = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
-                                } else {
-                                    transformed[customHeaders[field]] = '';
-                                }
-                                break;
-                            case 'latitude':
-                                transformed[customHeaders[field]] = record.latitude || '';
-                                break;
-                            case 'longitude':
-                                transformed[customHeaders[field]] = record.longitude || '';
-                                break;
-                            case 'altitude':
-                                transformed[customHeaders[field]] = record.altitude || '';
-                                break;
-                            case 'satellites':
-                                transformed[customHeaders[field]] = record.satellites || '';
-                                break;
-                            case 'speed':
-                                transformed[customHeaders[field]] = record.speed || '';
-                                break;
-                            case 'userData0':
-                                transformed[customHeaders[field]] = record.userData0 || '';
-                                break;
-                            case 'userData1':
-                                transformed[customHeaders[field]] = record.userData1 || '';
-                                break;
-                            case 'userData2':
-                                transformed[customHeaders[field]] = record.userData2 || '';
-                                break;
-                            case 'modbus0':
-                                transformed[customHeaders[field]] = record.modbus0 || '';
-                                break;
-                            default:
-                                transformed[customHeaders[field]] = record[field] || '';
-                        }
-                    });
-                    return transformed;
-                });
-                
-                // Generate CSV without headers - Manual approach to avoid quotes (same as manual export)
-                const headers = Object.values(customHeaders);
-                let csv = '';
-                
-                transformedData.forEach(row => {
-                    const values = headers.map(header => {
-                        const value = row[header];
-                        return value !== null && value !== undefined ? value : '';
-                    });
-                    csv += values.join(';') + '\n';
-                });
-                
-                // Generate filename for this device (same as manual export)
                 const groupName = deviceRecord.group ? deviceRecord.group.name : 'Unknown';
                 const deviceName = deviceRecord.name || deviceRecord.imei;
-                const filename = `${groupName}_${deviceName}_${dateStr}.pfsl`;
-                const filepath = path.join(exportsDir, filename);
                 
-                // Write file
-                fs.writeFileSync(filepath, csv);
-                
-                totalRecordsCount += filteredRecords.length;
-                filesGenerated++;
-                generatedFiles.push({
-                    filename,
-                    recordsCount: filteredRecords.length,
-                    fileSize: csv.length
-                });
-                
-                logger.info('Device export completed', { 
-                    filename, 
-                    recordsCount: filteredRecords.length,
-                    deviceImei 
-                });
+                // Process each day separately (from today going back)
+                for (let dayOffset = 0; dayOffset < days; dayOffset++) {
+                    // Calculate day boundaries in LOCAL time (00:00:00 to 23:59:59 for same calendar date)
+                    const now = new Date();
+                    const targetDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - dayOffset);
+                    
+                    // Start of day: 00:00:00.000
+                    const dayStart = new Date(targetDate);
+                    dayStart.setHours(0, 0, 0, 0);
+                    
+                    // End of day: 23:59:59.999
+                    const dayEnd = new Date(targetDate);
+                    dayEnd.setHours(23, 59, 59, 999);
+                    
+                    // Generate filename for this day (without timestamp - same for all schedules)
+                    // Use local date components to match the actual calendar day
+                    const dateStr = `${String(targetDate.getDate()).padStart(2, '0')}-${String(targetDate.getMonth() + 1).padStart(2, '0')}-${targetDate.getFullYear()}`;
+                    const filename = `${groupName}_${deviceName}_${dateStr}.pfsl`;
+                    const filepath = path.join(exportsDir, filename);
+                    
+                    logger.debug('Processing day', {
+                        deviceImei,
+                        dayOffset,
+                        dateStr,
+                        dayStart: dayStart.toISOString(),
+                        dayEnd: dayEnd.toISOString(),
+                        filename
+                    });
+                    
+                    // Query records for this specific device and day
+                    const records = await Record.findAll({
+                        where: {
+                            deviceImei: deviceImei,
+                            datetime: { 
+                                [Op.gte]: dayStart,
+                                [Op.lte]: dayEnd
+                            }
+                        },
+                        order: [['datetime', 'DESC']] // Same as manual export
+                    });
+                    
+                    // Filter records to ensure they belong to the same calendar date (safety check)
+                    // Also filter out records that only have IMEI and timestamp (same as manual export)
+                    const filteredRecords = records.filter(record => {
+                        // First, ensure the record's datetime falls within the target calendar date
+                        if (record.datetime) {
+                            const recordDate = new Date(record.datetime);
+                            const recordYear = recordDate.getFullYear();
+                            const recordMonth = recordDate.getMonth();
+                            const recordDay = recordDate.getDate();
+                            
+                            // Check if record's date matches target date (all in local time)
+                            if (recordYear !== targetDate.getFullYear() || 
+                                recordMonth !== targetDate.getMonth() || 
+                                recordDay !== targetDate.getDate()) {
+                                return false; // Skip records not from this calendar date
+                            }
+                        }
+                        
+                        // Filter out records that only have IMEI and timestamp (same as manual export)
+                        const hasGPS = record.latitude !== null && record.latitude !== undefined && 
+                                      record.longitude !== null && record.longitude !== undefined;
+                        const hasAltitude = record.altitude !== null && record.altitude !== undefined;
+                        const hasSatellites = record.satellites !== null && record.satellites !== undefined;
+                        const hasSpeed = record.speed !== null && record.speed !== undefined;
+                        const hasSensorData = (record.userData0 !== null && record.userData0 !== undefined) ||
+                                            (record.userData1 !== null && record.userData1 !== undefined) ||
+                                            (record.userData2 !== null && record.userData2 !== undefined) ||
+                                            (record.modbus0 !== null && record.modbus0 !== undefined);
+                        
+                        return hasGPS || hasAltitude || hasSatellites || hasSpeed || hasSensorData;
+                    });
+                    
+                    if (filteredRecords.length === 0) {
+                        logger.debug('No records found for device/day during auto-export', { 
+                            deviceImei, 
+                            dateStr 
+                        });
+                        continue; // Skip this day if no records
+                    }
+                    
+                    // Transform data with custom headers and date formatting (same as manual export)
+                    const transformedData = filteredRecords.map(record => {
+                        const transformed = {};
+                        
+                        // Map each field to its custom header with proper formatting
+                        Object.keys(customHeaders).forEach(field => {
+                            switch (field) {
+                                case 'deviceImei':
+                                    transformed[customHeaders[field]] = record.deviceImei;
+                                    break;
+                                case 'datetime':
+                                    // Format date as YYYY-MM-DD HH:MM:SS (same as manual export)
+                                    if (record.datetime) {
+                                        const date = new Date(record.datetime);
+                                        const year = date.getFullYear();
+                                        const month = String(date.getMonth() + 1).padStart(2, '0');
+                                        const day = String(date.getDate()).padStart(2, '0');
+                                        const hours = String(date.getHours()).padStart(2, '0');
+                                        const minutes = String(date.getMinutes()).padStart(2, '0');
+                                        const seconds = String(date.getSeconds()).padStart(2, '0');
+                                        transformed[customHeaders[field]] = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+                                    } else {
+                                        transformed[customHeaders[field]] = '';
+                                    }
+                                    break;
+                                case 'latitude':
+                                    transformed[customHeaders[field]] = record.latitude || '';
+                                    break;
+                                case 'longitude':
+                                    transformed[customHeaders[field]] = record.longitude || '';
+                                    break;
+                                case 'altitude':
+                                    transformed[customHeaders[field]] = record.altitude || '';
+                                    break;
+                                case 'satellites':
+                                    transformed[customHeaders[field]] = record.satellites || '';
+                                    break;
+                                case 'speed':
+                                    transformed[customHeaders[field]] = record.speed || '';
+                                    break;
+                                case 'userData0':
+                                    transformed[customHeaders[field]] = record.userData0 || '';
+                                    break;
+                                case 'userData1':
+                                    transformed[customHeaders[field]] = record.userData1 || '';
+                                    break;
+                                case 'userData2':
+                                    transformed[customHeaders[field]] = record.userData2 || '';
+                                    break;
+                                case 'modbus0':
+                                    transformed[customHeaders[field]] = record.modbus0 || '';
+                                    break;
+                                default:
+                                    transformed[customHeaders[field]] = record[field] || '';
+                            }
+                        });
+                        return transformed;
+                    });
+                    
+                    // Generate CSV without headers - Manual approach to avoid quotes (same as manual export)
+                    const headers = Object.values(customHeaders);
+                    let csv = '';
+                    
+                    transformedData.forEach(row => {
+                        const values = headers.map(header => {
+                            const value = row[header];
+                            return value !== null && value !== undefined ? value : '';
+                        });
+                        csv += values.join(';') + '\n';
+                    });
+                    
+                    // Write file (will overwrite if exists - same filename for all schedules on same day)
+                    fs.writeFileSync(filepath, csv);
+                    
+                    totalRecordsCount += filteredRecords.length;
+                    filesGenerated++;
+                    generatedFiles.push({
+                        filename,
+                        recordsCount: filteredRecords.length,
+                        fileSize: csv.length,
+                        dateStr
+                    });
+                    
+                    logger.info('Device/day export completed', { 
+                        filename, 
+                        recordsCount: filteredRecords.length,
+                        deviceImei,
+                        dateStr
+                    });
+                }
                 
             } catch (deviceError) {
                 logger.error('Error processing device during auto-export', { 
@@ -392,7 +523,8 @@ async function performDataSMAutoExport(devices, fields, customHeaders, jobId) {
             filesGenerated,
             totalRecordsCount,
             duration: `${duration}ms`,
-            generatedFiles: generatedFiles.map(f => f.filename)
+            daysProcessed: days,
+            generatedFiles: generatedFiles.map(f => `${f.filename} (${f.recordsCount} records)`)
         });
         
     } catch (error) {

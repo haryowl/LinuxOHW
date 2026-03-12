@@ -23,6 +23,7 @@
     "exceljs": "^4.4.0",
     "express": "^4.21.2",
     "express-session": "^1.18.1",
+    "iconv-lite": "^0.7.2",
     "json2csv": "^6.0.0-alpha.2",
     "jsonwebtoken": "^9.0.2",
     "node-cron": "^4.2.1",

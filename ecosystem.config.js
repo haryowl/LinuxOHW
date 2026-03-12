@@ -1,5 +1,36 @@
-// Load environment variables
-require('dotenv').config({ path: './env.production' });
+// Load environment variables from env.production
+// Make dotenv optional - if not available, try to read file manually or use PM2 env_file
+let envLoaded = false;
+try {
+    // Try to use dotenv if available
+    require('dotenv').config({ path: './env.production' });
+    envLoaded = true;
+} catch (error) {
+    // dotenv not available, try manual file reading
+    try {
+        const fs = require('fs');
+        const path = require('path');
+        const envFile = path.join(__dirname, 'env.production');
+        if (fs.existsSync(envFile)) {
+            const envContent = fs.readFileSync(envFile, 'utf8');
+            envContent.split('\n').forEach(line => {
+                const trimmedLine = line.trim();
+                if (trimmedLine && !trimmedLine.startsWith('#')) {
+                    const [key, ...valueParts] = trimmedLine.split('=');
+                    if (key && valueParts.length > 0) {
+                        const value = valueParts.join('=').replace(/^["']|["']$/g, '');
+                        process.env[key.trim()] = value.trim();
+                    }
+                }
+            });
+            envLoaded = true;
+        }
+    } catch (manualError) {
+        // If manual reading fails, continue without loading env file
+        // Environment variables should be set manually or via PM2 env_file option
+        console.warn('Warning: Could not load env.production. Set environment variables manually or use PM2 env_file option.');
+    }
+}
 
 module.exports = {
   apps: [{

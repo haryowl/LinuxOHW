@@ -1,4 +1,4 @@
-﻿// backend/src/app.js
+// backend/src/app.js
 
 // Validate environment variables on startup
 const { validateEnvironment } = require('./utils/envValidator');
@@ -19,15 +19,20 @@ const fs = require('fs');
 const config = require('./config');
 const http = require('http');
 const websocketHandler = require('./services/websocketHandler');
+const archiveStatStore = require('./services/archiveStatStore');
+const archiveStatScheduler = require('./services/archiveStatScheduler');
 const GalileoskyParser = require('./services/parser');
 const cache = require('./utils/cache');
 const net = require('net');
-const { Device, Record } = require('./models');
+const { Device, Record, DeviceCommand } = require('./models');
 const { Op } = require('sequelize');
 
 const recordsRouter = require('./routes/records');
 const alertsRouter = require('./routes/alerts');
 const autoExportRouter = require('./routes/autoExport');
+const deviceCommandsRouter = require('./routes/deviceCommands');
+const commandQueue = require('./services/commandQueue');
+const connectionRegistry = require('./services/connectionRegistry');
 
 // Configure server with larger header limits
 const server = http.createServer({
@@ -175,6 +180,7 @@ app.use('/api/device-groups', require('./routes/deviceGroups'));
 app.use('/api/auto-export', autoExportRouter);
 app.use('/api/user-device-group-access', require('./routes/userDeviceGroupAccess'));
 app.use('/api/roles', require('./routes/roles')); // New role management route
+app.use('/api/device-commands', deviceCommandsRouter);
 
 // Serve static files if frontend build exists (moved to end to not interfere with API routes)
 const frontendBuildPath = path.join(__dirname, '..', '..', 'frontend', 'build');
@@ -213,20 +219,17 @@ parser.on('recordStored', (record) => {
     if (record.speed) speed = record.speed;
     if (record.direction || record.course) direction = record.direction || record.course;
 
-    // Import the broadcast function from server.js
-    const { broadcast } = require('./server');
-    if (broadcast) {
-        broadcast('new_record', {
-            imei: record.imei,
-            timestamp: record.timestamp,
-            latitude,
-            longitude,
-            speed,
-            direction,
-            data: record.tags,
-            recordNumber: record.recordNumber
-        });
-    }
+    websocketHandler.broadcast('new_record', {
+        imei: record.imei,
+        deviceImei: record.imei,
+        timestamp: record.timestamp,
+        latitude,
+        longitude,
+        speed,
+        direction,
+        data: record.tags,
+        recordNumber: record.recordNumber
+    });
 });
 
 // Listen for device update events from parser and broadcast to WebSocket clients
@@ -237,17 +240,113 @@ parser.on('deviceUpdated', (deviceInfo) => {
         isActive: deviceInfo.isActive
     });
     
-    // Import the broadcast function from server.js
-    const { broadcast } = require('./server');
-    if (broadcast) {
-        broadcast('device_updated', {
-            imei: deviceInfo.imei,
-            isNew: deviceInfo.isNew,
-            lastSeen: deviceInfo.lastSeen,
-            isActive: deviceInfo.isActive
+    websocketHandler.broadcast('device_updated', {
+        imei: deviceInfo.imei,
+        isNew: deviceInfo.isNew,
+        lastSeen: deviceInfo.lastSeen,
+        isActive: deviceInfo.isActive
+    });
+});
+
+// Listen for command reply events and update command status
+parser.on('commandReply', async (reply) => {
+    try {
+        const { imei, commandNumber, replyText, replyDataHex } = reply || {};
+        if (!imei) {
+            return;
+        }
+
+        let command = null;
+        if (typeof commandNumber === 'number') {
+            command = await DeviceCommand.findOne({
+                where: {
+                    imei,
+                    status: 'sent',
+                    commandNumber
+                },
+                order: [['sentAt', 'DESC']]
+            });
+        } else {
+            logger.warn('Received command reply without commandNumber; skipping command status update', {
+                imei
+            });
+        }
+
+        if (command) {
+            await command.update({
+                status: 'replied',
+                replyText: replyText || null,
+                replyDataHex: replyDataHex || null,
+                repliedAt: new Date()
+            });
+        }
+
+        const trimmedReply = typeof replyText === 'string' ? replyText.trim() : '';
+        const numericParts = trimmedReply ? trimmedReply.match(/\d+/g) : null;
+        const isArchiveStatReply = numericParts && numericParts.length >= 4;
+        if (isArchiveStatReply) {
+            const parts = numericParts.map(value => Number(value));
+            const total = parts[1];
+            const serv1Transmitted = parts[2];
+            const serv2Transmitted = parts[3];
+            const serv1Queue = Math.max(total - serv1Transmitted, 0);
+            const serv2Queue = Math.max(total - serv2Transmitted, 0);
+            const device = await Device.findOne({ where: { imei } });
+
+            const stats = {
+                deviceId: device?.id || null,
+                deviceName: device?.name || imei,
+                total,
+                serv1Transmitted,
+                serv1Queue,
+                serv2Transmitted,
+                serv2Queue,
+                rawReply: replyText
+            };
+            archiveStatStore.updateStats(imei, stats);
+            const archivedStats = archiveStatStore.getStats(imei) || { ...stats, imei };
+
+            websocketHandler.broadcast('archivestat_update', archivedStats);
+
+            if ((serv1Queue < 20 || serv2Queue < 20) && archiveStatStore.shouldSendOut(imei, 300000)) {
+                const commandNumberOut = Math.floor(Math.random() * 0xFFFFFFFF);
+                if (device) {
+                    await DeviceCommand.create({
+                        deviceId: device.id,
+                        imei: device.imei,
+                        commandText: 'OUT 3,0',
+                        commandNumber: commandNumberOut,
+                        status: 'queued',
+                        priority: 10,
+                        maxRetries: 3,
+                        createdBy: null
+                    });
+                    archiveStatStore.markOutSent(imei);
+                    await commandQueue.processQueue();
+                    logger.info('OUT 3,0 queued due to low queue', {
+                        imei,
+                        serv1Queue,
+                        serv2Queue
+                    });
+                }
+            }
+        }
+
+        websocketHandler.broadcast('command_reply', {
+            imei,
+            commandNumber,
+            replyText,
+            replyDataHex,
+            receivedAt: new Date().toISOString()
         });
+    } catch (error) {
+        logger.error('Failed to handle command reply:', error);
     }
 });
+
+// Start command queue processing loop
+commandQueue.start();
+archiveStatScheduler.start();
 
 // Dashboard stats route - OPTIMIZED with caching
 app.get('/api/dashboard/stats', async (req, res) => {
@@ -360,6 +459,7 @@ app.get('/api/connections/stats', (req, res) => {
 // TCP Server for device connections
 const tcpServer = net.createServer((socket) => {
     const clientAddress = `${socket.remoteAddress}:${socket.remotePort}`;
+    connectionRegistry.registerConnection(clientAddress, socket);
     
     // Track connection
     activeConnections++;
@@ -497,6 +597,10 @@ const tcpServer = net.createServer((socket) => {
 
                     // Parse packet using the parser directly (like original implementation)
                     const parsedData = await parser.parse(packet, clientAddress);
+                    const imei = parser.getIMEI(clientAddress);
+                    if (imei) {
+                        connectionRegistry.bindImeiToConnection(imei, clientAddress);
+                    }
                     
                     logger.info('Packet parsed successfully:', {
                         address: socket.remoteAddress + ':' + socket.remotePort,
@@ -530,6 +634,7 @@ const tcpServer = net.createServer((socket) => {
         });
         // Force close the socket on error
         socket.destroy();
+        connectionRegistry.removeConnection(clientAddress);
     });
 
     socket.on('timeout', () => {
@@ -558,6 +663,7 @@ const tcpServer = net.createServer((socket) => {
         unsentData = Buffer.alloc(0);
         // Clear IMEI for this specific connection
         parser.clearIMEI(clientAddress);
+        connectionRegistry.removeConnection(clientAddress);
     });
 
     socket.on('end', () => {
@@ -566,6 +672,7 @@ const tcpServer = net.createServer((socket) => {
             timestamp: new Date().toISOString()
         });
         socket.destroy();
+        connectionRegistry.removeConnection(clientAddress);
     });
 });
 
@@ -646,6 +753,28 @@ server.listen(config.http.port, '0.0.0.0', () => {
 
 // Export shutdown function for use in server.js
 module.exports.gracefulShutdown = gracefulShutdown;
+
+// SPA fallback - serve index.html for all non-API routes (must be before error handlers)
+app.get('*', (req, res, next) => {
+    // Skip API routes and static files
+    if (req.path.startsWith('/api/') || req.path.startsWith('/static/')) {
+        return next();
+    }
+
+    // Skip if it's a file request (has extension)
+    if (req.path.includes('.')) {
+        return next();
+    }
+
+    const frontendBuildPath = path.join(__dirname, '..', '..', 'frontend', 'build');
+    const indexPath = path.join(frontendBuildPath, 'index.html');
+
+    if (fs.existsSync(indexPath)) {
+        res.sendFile(indexPath);
+    } else {
+        next(); // Let notFoundHandler handle it
+    }
+});
 
 // Use standardized error handler (must be last middleware)
 const { errorHandler, notFoundHandler } = require('./utils/errorHandler');

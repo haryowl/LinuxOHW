@@ -27,6 +27,8 @@ import UserManagement from './pages/UserManagement';
 import DeviceGroupManagement from './pages/DeviceGroupManagement';
 import RoleManagement from './pages/RoleManagement';
 import MultiTracking from './pages/MultiTracking';
+import CommandCenter from './pages/CommandCenter';
+import ArchiveStat from './pages/ArchiveStat';
 
 function App() {
   return (
@@ -131,6 +133,16 @@ function AppContent() {
                   <Route path="/device-groups" element={
                     <ProtectedRoute requiredPermission="device-groups">
                       <Layout><DeviceGroupManagement /></Layout>
+                    </ProtectedRoute>
+                  } />
+                  <Route path="/command-center" element={
+                    <ProtectedRoute requiredPermission="devices">
+                      <Layout><CommandCenter /></Layout>
+                    </ProtectedRoute>
+                  } />
+                  <Route path="/archive-stat" element={
+                    <ProtectedRoute requiredPermission="devices">
+                      <Layout><ArchiveStat /></Layout>
                     </ProtectedRoute>
                   } />
                   <Route path="*" element={<Navigate to="/" replace />} />

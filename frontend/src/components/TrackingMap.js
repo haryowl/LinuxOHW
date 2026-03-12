@@ -24,12 +24,44 @@ L.Icon.Default.mergeOptions({
   shadowUrl: require('leaflet/dist/images/marker-shadow.png'),
 });
 
-const TrackingMap = ({ height = 400, showInfo = true }) => {
+const TrackingMap = ({ height = 400, showInfo = true, selectedImeis = [] }) => {
   const [devices, setDevices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error] = useState(null);
   const [mapCenter, setMapCenter] = useState([0, 0]);
   const [mapZoom, setMapZoom] = useState(2);
+
+  const normalizeCoordinateValue = (value, maxAbs) => {
+    if (value === null || value === undefined) return value;
+    let numeric = Number(value);
+    if (!Number.isFinite(numeric)) return value;
+    let attempts = 0;
+    while (Math.abs(numeric) > maxAbs && attempts < 3) {
+      numeric /= 10;
+      attempts += 1;
+    }
+    return numeric;
+  };
+
+  const normalizeCoordinates = (latitude, longitude) => ({
+    latitude: normalizeCoordinateValue(latitude, 90),
+    longitude: normalizeCoordinateValue(longitude, 180),
+  });
+
+  const resolveTimestamp = (primary, fallback) => {
+    const now = Date.now();
+    const primaryDate = primary ? new Date(primary) : null;
+    if (primaryDate && !Number.isNaN(primaryDate.getTime())) {
+      if (primaryDate.getTime() <= now + 5 * 60 * 1000) {
+        return primaryDate.toISOString();
+      }
+    }
+    const fallbackDate = fallback ? new Date(fallback) : null;
+    if (fallbackDate && !Number.isNaN(fallbackDate.getTime())) {
+      return fallbackDate.toISOString();
+    }
+    return new Date().toISOString();
+  };
 
   // Load initial device locations
   const loadDevicesWithLocations = useCallback(async () => {
@@ -40,10 +72,28 @@ const TrackingMap = ({ height = 400, showInfo = true }) => {
       
       if (response.ok) {
         const devicesData = await response.json();
-        setDevices(Array.isArray(devicesData) ? devicesData : []);
+        const normalizedDevices = Array.isArray(devicesData)
+          ? devicesData.map((device) => {
+              if (!device?.location) return device;
+              const normalized = normalizeCoordinates(device.location.latitude, device.location.longitude);
+              return {
+                ...device,
+                location: {
+                  ...device.location,
+                  latitude: normalized.latitude,
+                  longitude: normalized.longitude,
+                  timestamp: resolveTimestamp(device.location.timestamp, device.lastSeen)
+                }
+              };
+            })
+          : [];
+        const filteredDevices = selectedImeis.length > 0
+          ? normalizedDevices.filter((device) => selectedImeis.includes(device.imei))
+          : normalizedDevices;
+        setDevices(filteredDevices);
         
         // Set map center to first device with location or default
-        const devicesWithLocation = Array.isArray(devicesData) ? devicesData.filter(device => device.location) : [];
+        const devicesWithLocation = filteredDevices.filter(device => device.location);
         if (devicesWithLocation.length > 0) {
           setMapCenter([devicesWithLocation[0].location.latitude, devicesWithLocation[0].location.longitude]);
           setMapZoom(10);
@@ -58,7 +108,7 @@ const TrackingMap = ({ height = 400, showInfo = true }) => {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [selectedImeis]);
 
   // WebSocket handler for real-time updates
   const handleWebSocketMessage = useCallback((message) => {
@@ -70,6 +120,11 @@ const TrackingMap = ({ height = 400, showInfo = true }) => {
         case 'device_updated':
           // Update device location when new data comes in
           if (data.imei && (data.latitude || data.longitude)) {
+            if (selectedImeis.length > 0 && !selectedImeis.includes(data.imei)) {
+              break;
+            }
+            const normalized = normalizeCoordinates(data.latitude, data.longitude);
+            const resolvedTimestamp = resolveTimestamp(data.timestamp || data.lastSeen, data.lastSeen);
             setDevices(prevDevices => {
               const deviceIndex = prevDevices.findIndex(d => d.imei === data.imei);
               
@@ -81,13 +136,13 @@ const TrackingMap = ({ height = 400, showInfo = true }) => {
                 updatedDevices[deviceIndex] = {
                   ...existingDevice,
                   location: {
-                    latitude: data.latitude || existingDevice.location?.latitude,
-                    longitude: data.longitude || existingDevice.location?.longitude,
-                    timestamp: data.timestamp || data.lastSeen || new Date().toISOString(),
+                    latitude: normalized.latitude ?? existingDevice.location?.latitude,
+                    longitude: normalized.longitude ?? existingDevice.location?.longitude,
+                    timestamp: resolvedTimestamp,
                     speed: data.speed || existingDevice.location?.speed,
                     direction: data.direction || existingDevice.location?.direction
                   },
-                  lastSeen: data.lastSeen || data.timestamp || new Date().toISOString()
+                  lastSeen: resolvedTimestamp
                 };
                 
                 return updatedDevices;
@@ -99,11 +154,11 @@ const TrackingMap = ({ height = 400, showInfo = true }) => {
                     name: data.name || `Device ${data.imei}`,
                     imei: data.imei,
                     status: data.isActive ? 'Active' : 'Inactive',
-                    lastSeen: data.lastSeen || data.timestamp || new Date().toISOString(),
+                    lastSeen: resolvedTimestamp,
                     location: {
-                      latitude: data.latitude,
-                      longitude: data.longitude,
-                      timestamp: data.timestamp || data.lastSeen || new Date().toISOString(),
+                      latitude: normalized.latitude,
+                      longitude: normalized.longitude,
+                      timestamp: resolvedTimestamp,
                       speed: data.speed,
                       direction: data.direction
                     }
@@ -120,6 +175,11 @@ const TrackingMap = ({ height = 400, showInfo = true }) => {
         case 'new_record':
           // Update device location when new record comes in
           if (data.deviceImei && data.latitude && data.longitude) {
+            if (selectedImeis.length > 0 && !selectedImeis.includes(data.deviceImei)) {
+              break;
+            }
+            const normalized = normalizeCoordinates(data.latitude, data.longitude);
+            const resolvedTimestamp = resolveTimestamp(data.datetime || data.timestamp, data.timestamp);
             setDevices(prevDevices => {
               const deviceIndex = prevDevices.findIndex(d => d.imei === data.deviceImei);
               
@@ -130,13 +190,13 @@ const TrackingMap = ({ height = 400, showInfo = true }) => {
                 updatedDevices[deviceIndex] = {
                   ...existingDevice,
                   location: {
-                    latitude: data.latitude,
-                    longitude: data.longitude,
-                    timestamp: data.datetime || data.timestamp || new Date().toISOString(),
+                    latitude: normalized.latitude,
+                    longitude: normalized.longitude,
+                    timestamp: resolvedTimestamp,
                     speed: data.speed,
                     direction: data.direction
                   },
-                  lastSeen: data.datetime || data.timestamp || new Date().toISOString()
+                  lastSeen: resolvedTimestamp
                 };
                 
                 return updatedDevices;
@@ -154,10 +214,10 @@ const TrackingMap = ({ height = 400, showInfo = true }) => {
     } catch (error) {
       console.error('Error processing WebSocket message in TrackingMap:', error);
     }
-  }, []);
+  }, [selectedImeis]);
 
   // Connect to WebSocket for real-time updates
-    // const ws = new WebSocket(wsUrl);
+  useWebSocket(null, handleWebSocketMessage);
 
   // Load initial data
   useEffect(() => {

@@ -27,80 +27,21 @@ if (fs.existsSync(frontendBuildPath)) {
 // Create parser instance
 const parser = new GalileoskyParser();
 
-// WebSocket server
-const wss = new WebSocket.Server({ noServer: true });
+// WebSocket server is already initialized in app.js via websocketHandler
+// No need to create another one here
 
-// Handle WebSocket upgrade
-wss.on('connection', (ws) => {
-    logger.info('WebSocket client connected');
-    ws.isAlive = true;
-    
-    ws.on('pong', () => {
-        ws.isAlive = true;
-    });
+// WebSocket is handled by websocketHandler in app.js
+// Use websocketHandler's methods for broadcasting
+const websocketHandler = require('./services/websocketHandler');
 
-    ws.on('message', (message) => {
-        try {
-            const data = JSON.parse(message);
-            handleWebSocketMessage(ws, data);
-        } catch (error) {
-            logger.error('WebSocket message error:', error);
-        }
-    });
-
-    ws.on('close', () => {
-        logger.info('WebSocket client disconnected');
-    });
-
-    ws.on('error', (error) => {
-        logger.error('WebSocket error:', error);
-    });
-});
-
-// Keep alive check
-setInterval(() => {
-    wss.clients.forEach((ws) => {
-        if (ws.isAlive === false) return ws.terminate();
-        ws.isAlive = false;
-        ws.ping();
-    });
-}, 30000);
-
-// Broadcast to WebSocket clients
+// Broadcast to WebSocket clients (wrapper for websocketHandler)
 function broadcast(topic, data) {
-    logger.debug(`Broadcasting to ${wss.clients.size} clients:`, { topic, dataSize: JSON.stringify(data).length });
-    wss.clients.forEach((client) => {
-        if (client.readyState === WebSocket.OPEN) {
-            client.send(JSON.stringify({ topic, data }));
-        }
-    });
+    logger.debug(`Broadcast requested: ${topic}`, { dataSize: JSON.stringify(data).length });
+    websocketHandler.broadcast(topic, data);
 }
 
-// Handle WebSocket messages
-function handleWebSocketMessage(ws, data) {
-    logger.debug('Received WebSocket message:', data);
-    // Handle different message types here
-    if (data.type === 'ping') {
-        ws.send(JSON.stringify({ type: 'pong' }));
-    }
-}
-
-// Serve React app for all other routes (SPA fallback) - exclude API routes
-app.get('*', (req, res, next) => {
-    // Skip API routes
-    if (req.path.startsWith('/api/')) {
-        return next();
-    }
-    
-    if (fs.existsSync(frontendBuildPath)) {
-        res.sendFile(path.join(frontendBuildPath, 'index.html'));
-    } else {
-        res.status(404).json({ error: 'Frontend build not found' });
-    }
-});
-
-// Error handling is done in app.js with standardized errorHandler
-// No need for duplicate error handler here
+// SPA fallback route is handled in app.js before error handlers
+// No need to duplicate it here
 
 // Start the server
 async function startServer() {
@@ -112,15 +53,9 @@ async function startServer() {
         // Get HTTP server from app.js (already started)
         const { httpServer, gracefulShutdown: appShutdown } = require('./app');
         
-        // Attach WebSocket server to the existing HTTP server
-        httpServer.on('upgrade', (request, socket, head) => {
-            logger.info('WebSocket upgrade request received', { url: request.url });
-            wss.handleUpgrade(request, socket, head, (ws) => {
-                wss.emit('connection', ws, request);
-            });
-        });
-
-        logger.info('WebSocket server ready');
+        // WebSocket server is already initialized in app.js via websocketHandler.initialize(server)
+        // No need to attach upgrade handler here - it's already handled
+        logger.info('WebSocket server ready (initialized in app.js)');
 
         // Enhanced graceful shutdown that also closes database
         const originalShutdown = appShutdown;
@@ -159,6 +94,5 @@ startServer().catch(error => {
 module.exports = {
     app,
     tcpServer,
-    wss,
     broadcast
 };
