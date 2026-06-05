@@ -1,26 +1,35 @@
+const path = require('path');
+const fs = require('fs');
+const { loadProductionEnv } = require('./src/utils/loadProductionEnv');
+
+const { envPath } = loadProductionEnv();
 const { sequelize } = require('./src/models');
 
 async function initializeDatabase() {
   try {
+    const storage = sequelize.options.storage;
+    const storageDir = path.dirname(storage);
+
+    if (!fs.existsSync(storageDir)) {
+      fs.mkdirSync(storageDir, { recursive: true });
+    }
+
     console.log('Connecting to database...');
+    if (envPath) {
+      console.log('Environment file:', envPath);
+    }
+    console.log('Database file:', storage);
+
     await sequelize.authenticate();
     console.log('Database connection established.');
 
     console.log('Initializing database schema...');
-    
-    // Sync all models to create tables
     await sequelize.sync({ force: false });
-    
+
+    const tables = await sequelize.getQueryInterface().showAllTables();
     console.log('✅ Database schema initialized successfully');
-    console.log('All tables created:');
-    console.log('- users');
-    console.log('- devices');
-    console.log('- records');
-    console.log('- alert_rules');
-    console.log('- alerts');
-    console.log('- device_groups');
-    console.log('- user_device_access');
-    console.log('- field_mappings');
+    console.log(`Tables (${tables.length}):`);
+    tables.forEach((table) => console.log(`- ${table}`));
 
   } catch (error) {
     console.error('❌ Error initializing database:', error.message);
@@ -31,7 +40,6 @@ async function initializeDatabase() {
   }
 }
 
-// Run if called directly
 if (require.main === module) {
   initializeDatabase()
     .then(() => {
@@ -44,4 +52,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = initializeDatabase; 
+module.exports = initializeDatabase;

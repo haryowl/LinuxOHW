@@ -141,13 +141,10 @@ The app uses SQLite by default (`backend/data/prod.sqlite`).
 ```bash
 cd /opt/linuxParser2/backend
 node init-database.js
-```
-
-Create the default admin user:
-
-```bash
 node create-default-admin.js
 ```
+
+Both scripts load `env.production` and use the same database file (`backend/data/prod.sqlite`).
 
 Default login (change immediately after first login):
 
@@ -344,6 +341,16 @@ pm2 restart gali-parse-frontend   # if using separate frontend process
 sudo ss -tlnp | grep -E '8080|8081'
 # Stop conflicting service or change HTTP_PORT / FRONTEND_PORT in env.production
 pm2 restart gali-parse
+```
+
+### `no such table: users` after init-database
+
+This happens if `init-database.js` and `create-default-admin.js` used different database files. Re-run both from `backend/` (they now share `env.production`):
+
+```bash
+cd /opt/linuxParser2/backend
+node init-database.js
+node create-default-admin.js
 ```
 
 ### Login fails / session issues

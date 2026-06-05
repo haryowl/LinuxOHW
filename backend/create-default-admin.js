@@ -1,16 +1,18 @@
-// Ensure we use production database
-process.env.NODE_ENV = process.env.NODE_ENV || 'production';
-require('dotenv').config({ path: '../env.production' });
+const { loadProductionEnv } = require('./src/utils/loadProductionEnv');
 
+loadProductionEnv();
 const { User, sequelize } = require('./src/models');
 
 async function createDefaultAdmin() {
   try {
+    const storage = sequelize.options.storage;
+
     await sequelize.authenticate();
     console.log('Database connection established.');
-    console.log('Using database:', sequelize.config.storage || sequelize.options.storage);
+    console.log('Using database:', storage);
 
-    // Check if admin user already exists
+    await sequelize.sync();
+
     const existingAdmin = await User.findOne({ where: { username: 'admin' } });
     if (existingAdmin) {
       console.log('Admin user already exists:', existingAdmin.username);
@@ -18,15 +20,10 @@ async function createDefaultAdmin() {
       console.log('  Email:', existingAdmin.email);
       console.log('  Role:', existingAdmin.role);
       console.log('  IsActive:', existingAdmin.isActive);
-      console.log('');
-      console.log('If login is failing, try deleting and recreating:');
-      console.log('  node -e "const {User,sequelize}=require(\'./src/models\');(async()=>{await sequelize.authenticate();const u=await User.findOne({where:{username:\'admin\'}});if(u)await u.destroy();await sequelize.close();})();"');
-      console.log('  node create-default-admin.js');
       return;
     }
 
-    // Create default admin user
-    const adminUser = await User.create({
+    await User.create({
       username: 'admin',
       email: 'admin@example.com',
       password: 'admin123',
@@ -47,10 +44,11 @@ async function createDefaultAdmin() {
     console.log('Email: admin@example.com');
 
   } catch (error) {
-    console.error('Error creating admin user:', error);
+    console.error('Error creating admin user:', error.message || error);
+    process.exitCode = 1;
   } finally {
     await sequelize.close();
   }
 }
 
-createDefaultAdmin(); 
+createDefaultAdmin();

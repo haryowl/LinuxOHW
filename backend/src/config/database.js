@@ -39,10 +39,16 @@ function buildSequelizeOptions() {
     };
   }
 
-  const storage = process.env.DB_STORAGE
-    || (process.env.NODE_ENV === 'production'
-      ? path.join(__dirname, '..', '..', 'data', 'prod.sqlite')
-      : path.join(__dirname, '..', '..', 'data', 'dev.sqlite'));
+  const defaultStorage = process.env.NODE_ENV === 'production'
+    ? path.join(__dirname, '..', '..', 'data', 'prod.sqlite')
+    : path.join(__dirname, '..', '..', 'data', 'dev.sqlite');
+
+  let storage = process.env.DB_STORAGE || defaultStorage;
+
+  if (!path.isAbsolute(storage)) {
+    const repoRoot = path.resolve(__dirname, '..', '..', '..');
+    storage = path.resolve(repoRoot, storage);
+  }
 
   return {
     url: null,
