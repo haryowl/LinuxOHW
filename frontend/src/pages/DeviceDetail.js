@@ -66,18 +66,18 @@ const DeviceDetail = () => {
   }, [deviceId]);
 
   const handleWebSocketMessage = (message) => {
-    if (message.type === 'deviceUpdate' && message.data.deviceId === deviceId) {
-      setDevice(prev => ({ ...prev, ...message.data }));
-    } else if (message.type === 'dataUpdate' && message.data.deviceId === deviceId) {
-      setData(prev => [...prev, message.data]);
+    if (message.topic === 'device_updated' && message.data) {
+      setDevice((prev) => (prev ? { ...prev, ...message.data } : prev));
+    } else if (message.topic === 'new_record' && message.data) {
+      setData((prev) => [...prev, message.data]);
     }
   };
 
-  const ws = useWebSocket('ws://localhost:3000', handleWebSocketMessage);
+  useWebSocket(null, handleWebSocketMessage);
 
   useEffect(() => {
     loadDeviceData();
-  }, [loadDeviceData, ws]);
+  }, [loadDeviceData]);
 
   if (loading) {
     return (

@@ -133,7 +133,7 @@ function getBufferStats() {
 // Log buffer stats every 30 seconds
 setInterval(() => {
     const stats = getBufferStats();
-    logger.info('Buffer Statistics:', stats);
+    logger.debug('Buffer Statistics:', stats);
 }, 30000);
 // Global data references for mobile application (in-memory arrays)
 global.parsedData = [];
@@ -162,12 +162,16 @@ app.use((req, res, next) => {
     next();
 });
 
-// Apply general rate limiting to all API routes (except login which has stricter limit)
+// Resolve session before rate limiting so authenticated users are not throttled
+const { optionalAuth } = require('./middleware/optionalAuth');
 const { rateLimit } = require('./middleware/rateLimiter');
+const { requireAuth } = require('./routes/auth');
+const { resolveAccessibleDeviceImeis } = require('./utils/accessibleDevices');
 const apiRateLimitEnabled = process.env.RATE_LIMIT_ENABLED !== 'false';
 const apiRateLimitMaxRequests = Number.parseInt(process.env.RATE_LIMIT_MAX_REQUESTS, 10) || 100;
 const apiRateLimitWindowMs = Number.parseInt(process.env.RATE_LIMIT_WINDOW_MS, 10) || 900000;
 const apiRateLimit = rateLimit(apiRateLimitMaxRequests, apiRateLimitWindowMs);
+app.use('/api', optionalAuth);
 app.use('/api', (req, res, next) => {
     if (!apiRateLimitEnabled) {
         return next();
@@ -205,7 +209,7 @@ websocketHandler.initialize(server);
 
 // Listen for record storage events from parser and broadcast to WebSocket clients
 parser.on('recordStored', (record) => {
-    logger.info('Broadcasting record to WebSocket clients', {
+    logger.debug('Broadcasting record to WebSocket clients', {
         imei: record.imei,
         timestamp: record.timestamp
     });
@@ -246,7 +250,7 @@ parser.on('recordStored', (record) => {
 
 // Listen for device update events from parser and broadcast to WebSocket clients
 parser.on('deviceUpdated', (deviceInfo) => {
-    logger.info('Broadcasting device update to WebSocket clients', {
+    logger.debug('Broadcasting device update to WebSocket clients', {
         imei: deviceInfo.imei,
         isNew: deviceInfo.isNew,
         isActive: deviceInfo.isActive
@@ -360,97 +364,60 @@ parser.on('commandReply', async (reply) => {
 commandQueue.start();
 archiveStatScheduler.start();
 
-// Dashboard stats route - OPTIMIZED with caching
-app.get('/api/dashboard/stats', async (req, res) => {
+// Dashboard stats route - authenticated and scoped per user
+app.get('/api/dashboard/stats', requireAuth, async (req, res) => {
     try {
         const requestStart = Date.now();
-        logger.debug('GET /api/dashboard/stats - Starting request');
-        
-        // Check cache first
-        const cacheKey = 'dashboard_stats';
+        const user = req.user;
+        const cacheKey = `dashboard_stats_${user.userId}_${user.role}`;
         const cachedStats = cache.get(cacheKey);
-        
+
         if (cachedStats) {
-            logger.debug('Dashboard stats served from cache');
             return res.json(cachedStats);
         }
-        
-        // Very simple, fast stats - avoid expensive count operations
+
         const now = new Date();
         const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-        
-        // Get user from session if available
+        const accessibleImeis = await resolveAccessibleDeviceImeis(user);
+
         let totalDevices = 0;
-        if (req.session && req.session.userId) {
-            const user = req.session;
-            
-            // If admin, get all devices
-            if (user.role === 'admin') {
-                totalDevices = await Device.count();
-            } else {
-                // For non-admin users, count only devices they have access to
-                const { UserDeviceGroupAccess } = require('./models');
-                const currentGroupAccess = await UserDeviceGroupAccess.findAll({
-                    where: { 
-                        userId: user.userId,
-                        isActive: true
-                    },
-                    attributes: ['groupId'],
-                    raw: true
-                });
-                
-                const currentGroupIds = currentGroupAccess.map(access => access.groupId);
-                
-                if (currentGroupIds.length > 0) {
-                    totalDevices = await Device.count({
-                        where: { groupId: currentGroupIds }
-                    });
-                } else {
-                    totalDevices = 0;
-                }
-            }
-        } else {
-            // No user session, return 0
-            totalDevices = 0;
-        }
-        
-        // Get record counts (with caching to avoid expensive queries)
-        const totalRecordsCacheKey = 'total_records_count';
-        let totalRecords = cache.get(totalRecordsCacheKey);
-        if (!totalRecords) {
-            // Only count if not in cache (expensive operation)
+        let totalRecords = 0;
+        let recentRecords = 0;
+
+        if (accessibleImeis === null) {
+            totalDevices = await Device.count();
             totalRecords = await Record.count();
-            cache.set(totalRecordsCacheKey, totalRecords, 300000); // Cache for 5 minutes
-        }
-        
-        const recentRecordsCacheKey = 'recent_records_count';
-        let recentRecords = cache.get(recentRecordsCacheKey);
-        if (!recentRecords) {
+            recentRecords = await Record.count({
+                where: { datetime: { [Op.gte]: oneDayAgo } }
+            });
+        } else if (accessibleImeis.length > 0) {
+            totalDevices = await Device.count({
+                where: { imei: { [Op.in]: accessibleImeis } }
+            });
+            totalRecords = await Record.count({
+                where: { deviceImei: { [Op.in]: accessibleImeis } }
+            });
             recentRecords = await Record.count({
                 where: {
-                    datetime: {
-                        [Op.gte]: oneDayAgo
-                    }
+                    deviceImei: { [Op.in]: accessibleImeis },
+                    datetime: { [Op.gte]: oneDayAgo }
                 }
             });
-            cache.set(recentRecordsCacheKey, recentRecords, 60000); // Cache for 1 minute
         }
-        
-        const totalTime = Date.now() - requestStart;
-        logger.debug(`Dashboard stats completed in ${totalTime}ms`);
-        
+
         const stats = {
             totalDevices,
             totalRecords,
             recentRecords,
             lastUpdate: now.toISOString()
         };
-        
-        // Cache the full stats for 30 seconds
+
         cache.set(cacheKey, stats, 30000);
-        
+        logger.debug(`Dashboard stats completed in ${Date.now() - requestStart}ms`, {
+            userId: user.userId,
+            role: user.role
+        });
         res.json(stats);
-        
     } catch (error) {
         logger.error('Error fetching dashboard stats:', error);
         res.status(500).json({ error: 'Failed to fetch dashboard stats' });
@@ -458,7 +425,7 @@ app.get('/api/dashboard/stats', async (req, res) => {
 });
 
 // Connection statistics route
-app.get('/api/connections/stats', (req, res) => {
+app.get('/api/connections/stats', requireAuth, (req, res) => {
     try {
         const stats = parser.getConnectionStats();
         res.json(stats);
@@ -505,7 +472,7 @@ const tcpServer = net.createServer((socket) => {
             }
 
             // Log raw data received
-            logger.info('Raw data received:', {
+            logger.debug('Raw data received:', {
                 address: socket.remoteAddress + ':' + socket.remotePort,
                 bufferLength: data.length,
                 hex: data.toString('hex').toUpperCase(),
@@ -546,7 +513,7 @@ const tcpServer = net.createServer((socket) => {
                 const isExtensionPacket = packetType !== 0x01 && !isIgnorablePacket;
 
                 // Log packet details
-                logger.info('Packet details:', {
+                logger.debug('Packet details:', {
                     address: socket.remoteAddress + ':' + socket.remotePort,
                     type: `0x${packetType.toString(16).padStart(2, '0')}`,
                     packetType: isIgnorablePacket ? 'Ignored' : (isExtensionPacket ? 'Extension' : 'Main Packet'),

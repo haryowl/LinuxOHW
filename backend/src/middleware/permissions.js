@@ -1,8 +1,48 @@
 const { User, DeviceGroup } = require('../models');
 const logger = require('../utils/logger');
+const { resolveAccessibleDeviceImeis } = require('../utils/accessibleDevices');
 
-// Middleware to check if user has access to specific devices
-// Middleware to check if user has access to specific devices
+function userHasMenuAccess(user, menuName) {
+    if (!user) {
+        return false;
+    }
+    if (user.role === 'admin') {
+        return true;
+    }
+
+    const permissions = user.permissions;
+    if (!permissions) {
+        return false;
+    }
+
+    const menu = menuName.toLowerCase();
+
+    if (Array.isArray(permissions.menus)) {
+        return permissions.menus.includes(menu);
+    }
+
+    if (permissions.menus && typeof permissions.menus === 'object') {
+        const entry = permissions.menus[menu];
+        return Boolean(entry?.read || entry?.write || entry === true);
+    }
+
+    if (Array.isArray(permissions)) {
+        return permissions.includes(menu);
+    }
+
+    return false;
+}
+
+function requireAdmin(req, res, next) {
+    if (!req.user) {
+        return res.status(401).json({ error: 'Authentication required' });
+    }
+    if (req.user.role !== 'admin') {
+        return res.status(403).json({ error: 'Admin access required' });
+    }
+    return next();
+}
+
 async function checkDeviceAccess(req, res, next) {
     try {
         const user = req.user;
@@ -10,23 +50,20 @@ async function checkDeviceAccess(req, res, next) {
             return res.status(401).json({ error: 'Authentication required' });
         }
 
-        // Admin has access to all devices - NO RESTRICTIONS
         if (user.role === 'admin') {
             return next();
         }
 
         const deviceId = req.params.deviceId || req.params.id;
         if (!deviceId) {
-            return next(); // No specific device requested
+            return next();
         }
 
-        // For non-admin users, check if they have write permission for devices menu
         const hasWritePermission = user.permissions?.menus?.devices?.write === true;
         if (!hasWritePermission) {
             return res.status(403).json({ error: 'Write permission required for device editing' });
         }
 
-        // Get the device to find its IMEI
         const { Device } = require('../models');
         const device = await Device.findByPk(deviceId);
         if (!device) {
@@ -34,31 +71,27 @@ async function checkDeviceAccess(req, res, next) {
         }
 
         const deviceImei = device.imei;
-
-        // Check if user has direct access to this device by IMEI
         const { permissions } = user;
         if (permissions.devices && permissions.devices.includes(deviceImei)) {
             return next();
         }
-        
-        // Check if user has access through UserDeviceAccess table
+
         const { UserDeviceAccess } = require('../models');
         const userDeviceAccess = await UserDeviceAccess.findOne({
-            where: { 
+            where: {
                 userId: user.userId,
-                deviceId: deviceId, // Use device ID here, not IMEI
+                deviceId: deviceId,
                 isActive: true
             }
         });
-        
+
         if (userDeviceAccess) {
             return next();
         }
 
-        // Check if user has access through device groups
         const { UserDeviceGroupAccess } = require('../models');
         const userGroupAccess = await UserDeviceGroupAccess.findAll({
-            where: { 
+            where: {
                 userId: user.userId,
                 isActive: true
             },
@@ -68,7 +101,7 @@ async function checkDeviceAccess(req, res, next) {
                 include: [{
                     model: Device,
                     as: 'devices',
-                    where: { id: deviceId } // Use device ID here
+                    where: { id: deviceId }
                 }]
             }]
         });
@@ -77,14 +110,13 @@ async function checkDeviceAccess(req, res, next) {
             return next();
         }
 
-        // Check if user has access through old device groups
         if (permissions.deviceGroups && permissions.deviceGroups.length > 0) {
             const deviceGroups = await DeviceGroup.findAll({
                 where: { id: permissions.deviceGroups },
                 include: [{
                     model: Device,
                     as: 'devices',
-                    where: { id: deviceId } // Use device ID here
+                    where: { id: deviceId }
                 }]
             });
 
@@ -100,7 +132,6 @@ async function checkDeviceAccess(req, res, next) {
     }
 }
 
-// Middleware to filter devices based on user permissions
 async function filterDevicesByPermission(req, res, next) {
     try {
         const user = req.user;
@@ -108,13 +139,14 @@ async function filterDevicesByPermission(req, res, next) {
             return res.status(401).json({ error: 'Authentication required' });
         }
 
-        // Admin can see all devices
+        req.userPermissions = user.permissions || {};
+
         if (user.role === 'admin') {
+            req.accessibleDeviceImeis = null;
             return next();
         }
 
-        // Store user permissions in request for later use
-        req.userPermissions = user.permissions;
+        req.accessibleDeviceImeis = await resolveAccessibleDeviceImeis(user, req.userPermissions);
         return next();
     } catch (error) {
         logger.error('Permission filter error:', error);
@@ -122,27 +154,14 @@ async function filterDevicesByPermission(req, res, next) {
     }
 }
 
-// Middleware to check menu access
 function checkMenuAccess(menuName) {
     return (req, res, next) => {
         try {
-            const user = req.user;
-            if (!user) {
+            if (!req.user) {
                 return res.status(401).json({ error: 'Authentication required' });
             }
 
-            // Admin has access to all menus
-            if (user.role === 'admin') {
-                return next();
-            }
-
-            // Check if user has access to this menu
-            const { permissions } = user;
-            if (!permissions || !permissions.menus) {
-                return res.status(403).json({ error: 'No menu permissions' });
-            }
-
-            if (!permissions.menus.includes(menuName.toLowerCase())) {
+            if (!userHasMenuAccess(req.user, menuName)) {
                 return res.status(403).json({ error: 'Access denied to this menu' });
             }
 
@@ -157,5 +176,7 @@ function checkMenuAccess(menuName) {
 module.exports = {
     checkDeviceAccess,
     filterDevicesByPermission,
-    checkMenuAccess
-}; 
+    checkMenuAccess,
+    requireAdmin,
+    userHasMenuAccess
+};

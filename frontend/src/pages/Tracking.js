@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
   Container,
   Grid,
@@ -39,16 +39,19 @@ import {
   DirectionsCar as CarIcon,
   DirectionsBoat as ShipIcon
 } from '@mui/icons-material';
-import { useMapEvents, Marker, Popup, Polyline } from 'react-leaflet';
 import { DateTimePicker } from '@mui/x-date-pickers/DateTimePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
-import SmartMap from '../components/SmartMap';
+import TrackingMapPanel from '../components/tracking/TrackingMapPanel';
+import TrackInfoPanel from '../components/tracking/TrackInfoPanel';
 import { BASE_URL, fetchDevices } from '../services/api';
+import { useSnackbar } from 'notistack';
 import { advancedGPSFilter } from '../utils/gpsFilter';
-import { trackingIcons, getSpeedBasedIcon } from '../utils/trackingIcons';
+import { decimateTrackPoints, resolveTrackTimestamp } from '../utils/trackDecimation';
+
+const MAX_MAP_POINTS = 2000;
 
 // Fix for default markers in react-leaflet
 delete L.Icon.Default.prototype._getIconUrl;
@@ -59,6 +62,7 @@ L.Icon.Default.mergeOptions({
 });
 
 const Tracking = () => {
+  const { enqueueSnackbar } = useSnackbar();
   const [devices, setDevices] = useState([]);
   const [selectedDevice, setSelectedDevice] = useState('');
   const [startDate, setStartDate] = useState(new Date(Date.now() - 24 * 60 * 60 * 1000)); // 24 hours ago
@@ -92,6 +96,8 @@ const Tracking = () => {
   // GPS icon customization
   const [gpsIconType, setGpsIconType] = useState('default');
   const [showSpeedColors, setShowSpeedColors] = useState(false);
+  const [mapDecimationInfo, setMapDecimationInfo] = useState(null);
+  const [serverTruncated, setServerTruncated] = useState(false);
 
   // Load devices
   useEffect(() => {
@@ -170,8 +176,11 @@ const Tracking = () => {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
 
+      const truncated = response.headers.get('X-Tracking-Truncated') === 'true';
+      const maxPoints = response.headers.get('X-Tracking-Max-Points');
+      setServerTruncated(truncated);
+
       const data = await response.json();
-      console.log('Tracking data received:', data);
       const rawData = Array.isArray(data) ? data : [];
       
       // Apply GPS filtering if enabled
@@ -191,7 +200,15 @@ const Tracking = () => {
       setTrackingData(processedData);
       setDebugInfo(`Loaded ${rawData.length} tracking points${stats ? `, filtered to ${stats.filteredPoints} points (${stats.removalPercentage}% removed)` : ''}`);
 
-      // Set map center to first point or default
+      if (truncated) {
+        enqueueSnackbar(
+          `Track limited to ${maxPoints || 'server max'} points. Narrow the date range for full detail.`,
+          { variant: 'warning' }
+        );
+      } else {
+        enqueueSnackbar(`Loaded ${processedData.length} tracking points`, { variant: 'success' });
+      }
+
       if (processedData.length > 0) {
         setMapCenter([processedData[0].latitude, processedData[0].longitude]);
         setMapZoom(13);
@@ -200,71 +217,49 @@ const Tracking = () => {
       console.error('Error loading tracking data:', error);
       setError(`Failed to load tracking data: ${error.message}`);
       setDebugInfo(`Error: ${error.message}`);
-      setTrackingData([]); // Ensure trackingData is always an array
+      enqueueSnackbar(`Failed to load tracking data: ${error.message}`, { variant: 'error' });
+      setTrackingData([]);
     } finally {
       setLoading(false);
     }
   };
 
-  // Create polyline coordinates for the track
-  const trackCoordinates = trackingData.map(point => [point.latitude, point.longitude]);
+  const mapTrack = useMemo(
+    () => decimateTrackPoints(trackingData, MAX_MAP_POINTS),
+    [trackingData]
+  );
 
-  // Helper functions for marine navigation calculations
-  const calculateDistance = (points) => {
-    if (points.length < 2) return 0;
-    let totalDistance = 0;
-    for (let i = 1; i < points.length; i++) {
-      const prev = points[i - 1];
-      const curr = points[i];
-      const distance = getDistanceFromLatLonInKm(
-        prev.latitude, prev.longitude,
-        curr.latitude, curr.longitude
-      );
-      totalDistance += distance;
+  useEffect(() => {
+    if (mapTrack.decimated) {
+      setMapDecimationInfo({
+        original: mapTrack.originalCount,
+        displayed: mapTrack.points.length
+      });
+    } else {
+      setMapDecimationInfo(null);
     }
-    return totalDistance;
-  };
+  }, [mapTrack]);
 
-  const calculateAverageSpeed = (points) => {
-    if (points.length < 2) return 0;
-    const speeds = points.map(p => p.speed || 0).filter(s => s > 0);
-    if (speeds.length === 0) return 0;
-    return speeds.reduce((sum, speed) => sum + speed, 0) / speeds.length;
-  };
+  const trackCoordinates = useMemo(
+    () => mapTrack.points.map((point) => [point.latitude, point.longitude]),
+    [mapTrack.points]
+  );
 
-  const calculateCourseChanges = (points) => {
-    if (points.length < 3) return 0;
-    let changes = 0;
-    for (let i = 1; i < points.length - 1; i++) {
-      const prev = points[i - 1];
-      const curr = points[i];
-      const next = points[i + 1];
-      
-      if (prev.direction && curr.direction && next.direction) {
-        const change1 = Math.abs(curr.direction - prev.direction);
-        const change2 = Math.abs(next.direction - curr.direction);
-        if (change1 > 10 || change2 > 10) changes++;
-      }
+  const trackSummary = useMemo(() => {
+    if (trackingData.length === 0) {
+      return null;
     }
-    return changes;
-  };
-
-  const getDistanceFromLatLonInKm = (lat1, lon1, lat2, lon2) => {
-    const R = 6371; // Radius of the earth in km
-    const dLat = deg2rad(lat2 - lat1);
-    const dLon = deg2rad(lon2 - lon1);
-    const a = 
-      Math.sin(dLat/2) * Math.sin(dLat/2) +
-      Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) * 
-      Math.sin(dLon/2) * Math.sin(dLon/2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-    const d = R * c; // Distance in km
-    return d;
-  };
-
-  const deg2rad = (deg) => {
-    return deg * (Math.PI/180);
-  };
+    const startTs = resolveTrackTimestamp(trackingData[0]);
+    const endTs = resolveTrackTimestamp(trackingData[trackingData.length - 1]);
+    return {
+      points: trackingData.length,
+      startTs,
+      endTs,
+      durationHours: startTs && endTs
+        ? Math.round((new Date(endTs) - new Date(startTs)) / (1000 * 60 * 60))
+        : null
+    };
+  }, [trackingData]);
 
   // Function to open Marine Traffic with current coordinates
   const openMarineTraffic = () => {
@@ -371,32 +366,25 @@ const Tracking = () => {
     setReplayProgress(newValue);
   };
 
-  // Get current replay point
-  const getCurrentReplayPoint = () => {
+  const getCurrentReplayPoint = useCallback(() => {
     if (trackingData.length === 0 || currentReplayIndex >= trackingData.length) {
       return null;
     }
     return trackingData[currentReplayIndex];
-  };
+  }, [trackingData, currentReplayIndex]);
 
-  // Get icon for current point
-  const getCurrentIcon = (point) => {
-    if (!point) return trackingIcons.default;
-    
-    if (showSpeedColors) {
-      return getSpeedBasedIcon(gpsIconType, point.speed || 0);
-    }
-    
-    return trackingIcons[gpsIconType] || trackingIcons.default;
-  };
+  const currentReplayPoint = useMemo(
+    () => getCurrentReplayPoint(),
+    [getCurrentReplayPoint]
+  );
 
   // Update map center when replaying
   useEffect(() => {
-    if (isReplaying && getCurrentReplayPoint()) {
-      setMapCenter([getCurrentReplayPoint().latitude, getCurrentReplayPoint().longitude]);
-      setMapZoom(15); // Zoom in during replay for better visibility
+    if (isReplaying && currentReplayPoint) {
+      setMapCenter([currentReplayPoint.latitude, currentReplayPoint.longitude]);
+      setMapZoom(15);
     }
-  }, [isReplaying, getCurrentReplayPoint]);
+  }, [isReplaying, currentReplayPoint]);
 
   // Cleanup replay interval on unmount
   useEffect(() => {
@@ -421,6 +409,24 @@ const Tracking = () => {
             {debugInfo && (
               <Alert severity="info" sx={{ mb: 2 }}>
                 Debug: {debugInfo}
+              </Alert>
+            )}
+
+            {error && (
+              <Alert severity="error" sx={{ mb: 2 }}>
+                {error}
+              </Alert>
+            )}
+
+            {serverTruncated && (
+              <Alert severity="warning" sx={{ mb: 2 }}>
+                Server returned a capped number of points. Use a shorter date range for complete tracks.
+              </Alert>
+            )}
+
+            {mapDecimationInfo && (
+              <Alert severity="info" sx={{ mb: 2 }}>
+                Map displays {mapDecimationInfo.displayed} of {mapDecimationInfo.original} points for smoother rendering.
               </Alert>
             )}
             
@@ -483,12 +489,6 @@ const Tracking = () => {
                 </Button>
               </Grid>
             </Grid>
-
-            {error && (
-              <Alert severity="error" sx={{ mt: 2 }}>
-                {error}
-              </Alert>
-            )}
 
             {/* GPS Filtering Controls */}
             <Box sx={{ mt: 3, p: 2, border: '1px solid #e0e0e0', borderRadius: 1, backgroundColor: '#fafafa' }}>
@@ -886,11 +886,11 @@ const Tracking = () => {
                 
                 <Grid item xs={12} md={3}>
                   <Typography variant="body2" color="text.secondary">
-                    {getCurrentReplayPoint() ? (
+                    {currentReplayPoint ? (
                       <>
                         Point {currentReplayIndex + 1} of {trackingData.length}<br />
-                        Time: {new Date(getCurrentReplayPoint().timestamp).toLocaleString()}<br />
-                        Speed: {getCurrentReplayPoint().speed || 0} km/h
+                        Time: {resolveTrackTimestamp(currentReplayPoint) ? new Date(resolveTrackTimestamp(currentReplayPoint)).toLocaleString() : 'N/A'}<br />
+                        Speed: {currentReplayPoint.speed || 0} km/h
                       </>
                     ) : (
                       'No data available'
@@ -902,161 +902,27 @@ const Tracking = () => {
           </Grid>
         )}
 
-        {/* Map */}
         <Grid item xs={12} md={8}>
-          <Paper sx={{ p: 2, height: 600 }}>
-            <Typography variant="h6" gutterBottom>
-              Track Map
-            </Typography>
-            <SmartMap
-              center={mapCenter}
-              zoom={mapZoom}
-              height="100%"
-              mapType={mapType}
-            >
-              {/* Track line */}
-              {trackCoordinates.length > 1 && (
-                <Polyline
-                  positions={trackCoordinates}
-                  color="blue"
-                  weight={3}
-                  opacity={0.7}
-                />
-              )}
-              
-              {/* Replay marker (current position) */}
-              {getCurrentReplayPoint() && (
-                <Marker 
-                  position={[getCurrentReplayPoint().latitude, getCurrentReplayPoint().longitude]}
-                  icon={getCurrentIcon(getCurrentReplayPoint())}
-                >
-                  <Popup>
-                    <div>
-                      <strong>Current Position</strong><br />
-                      Time: {new Date(getCurrentReplayPoint().timestamp).toLocaleString()}<br />
-                      Speed: {getCurrentReplayPoint().speed || 0} km/h<br />
-                      Direction: {getCurrentReplayPoint().direction || 0}°<br />
-                      Point: {currentReplayIndex + 1} of {trackingData.length}
-                    </div>
-                  </Popup>
-                </Marker>
-              )}
-              
-              {/* Start marker (only show when not replaying) */}
-              {trackingData.length > 0 && !isReplaying && currentReplayIndex === 0 && (
-                <Marker 
-                  position={[trackingData[0].latitude, trackingData[0].longitude]}
-                  icon={getCurrentIcon(trackingData[0])}
-                >
-                  <Popup>
-                    <div>
-                      <strong>Start Point</strong><br />
-                      Time: {new Date(trackingData[0].timestamp).toLocaleString()}<br />
-                      Speed: {trackingData[0].speed || 0} km/h<br />
-                      Direction: {trackingData[0].direction || 0}°
-                    </div>
-                  </Popup>
-                </Marker>
-              )}
-              
-              {/* End marker (only show when not replaying) */}
-              {trackingData.length > 1 && !isReplaying && currentReplayIndex === 0 && (
-                <Marker 
-                  position={[trackingData[trackingData.length - 1].latitude, trackingData[trackingData.length - 1].longitude]}
-                  icon={getCurrentIcon(trackingData[trackingData.length - 1])}
-                >
-                  <Popup>
-                    <div>
-                      <strong>End Point</strong><br />
-                      Time: {new Date(trackingData[trackingData.length - 1].timestamp).toLocaleString()}<br />
-                      Speed: {trackingData[trackingData.length - 1].speed || 0} km/h<br />
-                      Direction: {trackingData[trackingData.length - 1].direction || 0}°
-                    </div>
-                  </Popup>
-                </Marker>
-              )}
-            </SmartMap>
-          </Paper>
+          <TrackingMapPanel
+            mapCenter={mapCenter}
+            mapZoom={mapZoom}
+            mapType={mapType}
+            trackCoordinates={trackCoordinates}
+            trackingData={trackingData}
+            currentReplayPoint={currentReplayPoint}
+            currentReplayIndex={currentReplayIndex}
+            isReplaying={isReplaying}
+            gpsIconType={gpsIconType}
+            showSpeedColors={showSpeedColors}
+          />
         </Grid>
 
-        {/* Track Info */}
         <Grid item xs={12} md={4}>
-          <Paper sx={{ p: 2, height: 600, overflow: 'auto' }}>
-            <Typography variant="h6" gutterBottom>
-              Track Information
-            </Typography>
-            
-            {trackingData.length > 0 ? (
-              <Box>
-                <Card sx={{ mb: 2 }}>
-                  <CardContent>
-                    <Typography variant="subtitle1" gutterBottom>
-                      Track Summary
-                    </Typography>
-                    <Typography variant="body2">
-                      <strong>Points:</strong> {trackingData.length}<br />
-                      <strong>Duration:</strong> {trackingData.length > 1 
-                        ? `${Math.round((new Date(trackingData[trackingData.length - 1].timestamp) - new Date(trackingData[0].timestamp)) / (1000 * 60 * 60))} hours`
-                        : 'N/A'}<br />
-                      <strong>Start:</strong> {new Date(trackingData[0].timestamp).toLocaleString()}<br />
-                      <strong>End:</strong> {new Date(trackingData[trackingData.length - 1].timestamp).toLocaleString()}
-                      {(mapType === 'openseamap' || mapType === 'marine_traffic' || mapType === 'noaa_charts' || mapType === 'emodnet_bathymetry' || mapType === 'opencpn_charts' || mapType === 'cartodb_dark' || mapType === 'cartodb_light' || mapType === 'marine_traffic_web') && trackingData.length > 1 && (
-                        <>
-                          <br /><br />
-                          <Typography variant="subtitle2" color="primary" gutterBottom>
-                            🚢 Marine Navigation Info
-                          </Typography>
-                          <strong>Distance:</strong> {calculateDistance(trackingData).toFixed(2)} km<br />
-                          <strong>Average Speed:</strong> {calculateAverageSpeed(trackingData).toFixed(1)} km/h<br />
-                          <strong>Course Changes:</strong> {calculateCourseChanges(trackingData)}<br />
-                          <strong>Max Speed:</strong> {Math.max(...trackingData.map(p => p.speed || 0)).toFixed(1)} km/h
-                        </>
-                      )}
-                    </Typography>
-                  </CardContent>
-                </Card>
-
-                <Typography variant="subtitle1" gutterBottom>
-                  Recent Points
-                </Typography>
-                
-                {trackingData.slice(-10).reverse().map((point, index) => (
-                  <Card key={index} sx={{ mb: 1 }}>
-                    <CardContent sx={{ py: 1 }}>
-                      <Typography variant="body2">
-                        <strong>{new Date(point.timestamp).toLocaleString()}</strong><br />
-                        <Chip 
-                          label={`${point.latitude.toFixed(6)}, ${point.longitude.toFixed(6)}`} 
-                          size="small" 
-                          sx={{ mr: 1, mb: 1 }}
-                        />
-                        {point.speed && (
-                          <Chip 
-                            label={`${point.speed} km/h`} 
-                            size="small" 
-                            color="primary" 
-                            sx={{ mr: 1, mb: 1 }}
-                          />
-                        )}
-                        {point.direction && (
-                          <Chip 
-                            label={`${point.direction}°`} 
-                            size="small" 
-                            color="secondary" 
-                            sx={{ mb: 1 }}
-                          />
-                        )}
-                      </Typography>
-                    </CardContent>
-                  </Card>
-                ))}
-              </Box>
-            ) : (
-              <Typography variant="body2" color="text.secondary">
-                No tracking data available. Select a device and time period to view the track.
-              </Typography>
-            )}
-          </Paper>
+          <TrackInfoPanel
+            trackingData={trackingData}
+            trackSummary={trackSummary}
+            mapType={mapType}
+          />
         </Grid>
       </Grid>
     </Container>

@@ -34,22 +34,11 @@ import ScheduleIcon from '@mui/icons-material/Schedule';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
 import axios from 'axios';
-
-// Use the same API detection logic as your other components
-const BASE_URL = (() => {
-  const hostname = window.location.hostname;
-  if (hostname === 'localhost' || hostname === '127.0.0.1') {
-    return 'http://localhost:3001';
-  } else {
-    return `http://${hostname}:3001`;
-  }
-})();
-
-console.log('🔍 DataSM BASE_URL:', BASE_URL);
+import { useSnackbar } from 'notistack';
+import { BASE_URL } from '../services/api';
 
 const DataSM = () => {
-  console.log('🚀 DataSM component mounted');
-
+  const { enqueueSnackbar } = useSnackbar();
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(false);
   const [startDate, setStartDate] = useState(new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().split('T')[0]);
@@ -80,13 +69,13 @@ const DataSM = () => {
   };
 
   const fetchData = async () => {
-    console.log('🔄 fetchData called');
     setLoading(true);
     try {
       const params = {
         startDate: new Date(`${startDate}T${startHour}:00:00`).toISOString(),
         endDate: new Date(`${endDate}T${endHour}:59:59`).toISOString(),
-		merge: '1',
+        merge: '1',
+        limit: 500,
       };
       
       if (selectedDevices.length > 0) {
@@ -98,9 +87,10 @@ const DataSM = () => {
         withCredentials: true
       });
       setRecords(response.data);
-      console.log('✅ fetchData completed:', response.data.length, 'records');
+      enqueueSnackbar(`Loaded ${response.data.length} records`, { variant: 'success' });
     } catch (error) {
-      console.error('❌ Error fetching data:', error);
+      console.error('Error fetching data:', error);
+      enqueueSnackbar('Failed to load preview data', { variant: 'error' });
     }
     setLoading(false);
   };
@@ -114,8 +104,9 @@ const DataSM = () => {
       setAvailableDevices(response.data);
       console.log('✅ fetchAvailableDevices completed:', response.data.length, 'devices');
     } catch (error) {
-      console.error('❌ Error fetching devices:', error);
+      console.error('Error fetching devices:', error);
       setAvailableDevices([]);
+      enqueueSnackbar('Failed to load devices', { variant: 'error' });
     }
   };
 
@@ -161,14 +152,8 @@ const DataSM = () => {
         setSelectedDevices([]);
       }
     } catch (error) {
-      console.error('❌ Error fetching auto export status:', error);
-      console.error('❌ Error details:', {
-        message: error.message,
-        response: error.response?.data,
-        status: error.response?.status,
-        url: error.config?.url
-      });
-      // Reset to defaults on error
+      console.error('Error fetching auto export status:', error);
+      enqueueSnackbar('Failed to load auto-export settings', { variant: 'warning' });
       setAutoExportEnabled(false);
       setAutoExportTimes(['00:00']);
       setSelectedDevices([]);
@@ -176,17 +161,12 @@ const DataSM = () => {
   };
 
   useEffect(() => {
-    console.log('🚀 useEffect running');
-    
     const initializeData = async () => {
       try {
-        console.log('🔄 Starting data initialization...');
         await Promise.all([
-          fetchData(),
           fetchAvailableDevices(),
           fetchAutoExportStatus()
         ]);
-        console.log('✅ Data initialization completed');
       } catch (error) {
         console.error('❌ Error during data initialization:', error);
       }
@@ -233,8 +213,10 @@ const DataSM = () => {
       document.body.appendChild(link);
       link.click();
       link.remove();
+      enqueueSnackbar('Export downloaded successfully', { variant: 'success' });
     } catch (error) {
       console.error('Error exporting data:', error);
+      enqueueSnackbar('Export failed. Try a smaller date range.', { variant: 'error' });
     }
     setExporting(false);
   };
@@ -270,9 +252,10 @@ const DataSM = () => {
       setTimeout(() => {
         fetchAutoExportStatus();
       }, 500);
-      
+      enqueueSnackbar(newState ? 'Auto-export enabled' : 'Auto-export disabled', { variant: 'success' });
     } catch (error) {
-      console.error('❌ Error toggling auto export:', error);
+      console.error('Error toggling auto export:', error);
+      enqueueSnackbar('Failed to update auto-export settings', { variant: 'error' });
     }
   };
 
@@ -322,9 +305,10 @@ const DataSM = () => {
       }, {
         withCredentials: true
       });
-      console.log('✅ Auto-export config updated');
+      enqueueSnackbar('Auto-export schedule updated', { variant: 'success' });
     } catch (error) {
-      console.error('❌ Error updating auto-export config:', error);
+      console.error('Error updating auto-export config:', error);
+      enqueueSnackbar('Failed to update auto-export schedule', { variant: 'error' });
     }
   };
 

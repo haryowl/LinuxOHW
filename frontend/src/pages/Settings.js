@@ -44,11 +44,25 @@ import {
 import { BASE_URL } from '../services/api';
 import { alpha } from '@mui/material/styles';
 import { useTheme as useAppTheme } from '../contexts/ThemeContext';
-import { fetchSettings as apiFetchSettings, updateSettings as apiUpdateSettings, fetchDataForwarderConfig, updateDataForwarderConfig, authenticatedFetch, fetchDataForwarderLogs, fetchDevices } from '../services/api';
+import { useAuth } from '../contexts/AuthContext';
+import {
+  fetchSettings as apiFetchSettings,
+  updateSettings as apiUpdateSettings,
+  fetchDataForwarderConfig,
+  updateDataForwarderConfig,
+  authenticatedFetch,
+  fetchDataForwarderLogs,
+  fetchDevices,
+  fetchRetentionConfig,
+  updateRetentionConfig,
+  runRetentionPurge
+} from '../services/api';
 
 const Settings = () => {
   const theme = useTheme();
   const { isDarkMode, toggleTheme } = useAppTheme();
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
   const [settings, setSettings] = useState({
     serverUrl: BASE_URL || '',
     wsUrl: BASE_URL.replace('http', 'ws') || '',
@@ -96,6 +110,14 @@ const Settings = () => {
   const [forwarderLogs, setForwarderLogs] = useState([]);
   const [isLoadingLogs, setIsLoadingLogs] = useState(false);
   const [deviceOptions, setDeviceOptions] = useState([]);
+  const [retentionConfig, setRetentionConfig] = useState({
+    enabled: false,
+    retentionDays: 365,
+    lastPurgeAt: null,
+    lastPurgeDeleted: 0
+  });
+  const [isLoadingRetention, setIsLoadingRetention] = useState(false);
+  const [isPurgingRetention, setIsPurgingRetention] = useState(false);
 
   const showSnackbar = (message, severity) => {
     setSnackbar({
@@ -107,6 +129,66 @@ const Settings = () => {
 
   const handleCloseSnackbar = () => {
     setSnackbar({ ...snackbar, open: false });
+  };
+
+  const loadRetentionConfig = useCallback(async () => {
+    if (!isAdmin) return;
+    try {
+      setIsLoadingRetention(true);
+      const response = await fetchRetentionConfig();
+      if (response.ok) {
+        const data = await response.json();
+        setRetentionConfig(data);
+      }
+    } catch (error) {
+      showSnackbar('Failed to load retention settings', 'error');
+    } finally {
+      setIsLoadingRetention(false);
+    }
+  }, [isAdmin]);
+
+  const handleSaveRetention = async () => {
+    try {
+      setIsLoadingRetention(true);
+      const response = await updateRetentionConfig({
+        enabled: retentionConfig.enabled,
+        retentionDays: retentionConfig.retentionDays
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setRetentionConfig(data.config || retentionConfig);
+        showSnackbar('Retention settings saved', 'success');
+      } else {
+        showSnackbar('Failed to save retention settings', 'error');
+      }
+    } catch (error) {
+      showSnackbar('Failed to save retention settings', 'error');
+    } finally {
+      setIsLoadingRetention(false);
+    }
+  };
+
+  const handleRunRetentionPurge = async () => {
+    try {
+      setIsPurgingRetention(true);
+      const response = await runRetentionPurge();
+      if (response.ok) {
+        const data = await response.json();
+        setRetentionConfig((prev) => ({
+          ...prev,
+          lastPurgeAt: data.result?.cutoff || new Date().toISOString(),
+          lastPurgeDeleted: data.result?.deleted || 0
+        }));
+        showSnackbar(`Purge completed (${data.result?.deleted || 0} records removed)`, 'success');
+        await loadRetentionConfig();
+      } else {
+        showSnackbar('Retention purge failed', 'error');
+      }
+    } catch (error) {
+      showSnackbar('Retention purge failed', 'error');
+    } finally {
+      setIsPurgingRetention(false);
+    }
   };
 
   const fetchSettings = useCallback(async () => {
@@ -240,6 +322,7 @@ const Settings = () => {
     // Load essential data only
     fetchSettings();
     fetchForwarderConfig();
+    loadRetentionConfig();
     
     // Load secondary data with delay to avoid overwhelming
     setTimeout(() => {
@@ -254,7 +337,7 @@ const Settings = () => {
     return () => {
       clearInterval(statusInterval);
     };
-  }, [fetchSettings, fetchForwarderConfig]); // Remove other dependencies to prevent re-runs
+  }, [fetchSettings, fetchForwarderConfig, loadRetentionConfig]);
 
   useEffect(() => {
     // Fetch device IMEIs for the multi-select
@@ -838,6 +921,77 @@ const Settings = () => {
             </CardContent>
           </Card>
         </Grid>
+
+        {isAdmin && (
+          <Grid item xs={12} md={6}>
+            <Card sx={{ mt: 4 }}>
+              <CardContent>
+                <Typography variant="h6" gutterBottom>Record Retention</Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                  Automatically delete records older than the configured number of days. Runs daily at 03:00 UTC.
+                </Typography>
+                <Grid container spacing={2} alignItems="center">
+                  <Grid item xs={12} sm={6}>
+                    <FormControlLabel
+                      control={(
+                        <Switch
+                          checked={retentionConfig.enabled}
+                          onChange={(e) => setRetentionConfig((prev) => ({ ...prev, enabled: e.target.checked }))}
+                          color="primary"
+                        />
+                      )}
+                      label="Enable automatic retention"
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6}>
+                    <TextField
+                      label="Retention days"
+                      type="number"
+                      fullWidth
+                      value={retentionConfig.retentionDays}
+                      onChange={(e) => setRetentionConfig((prev) => ({
+                        ...prev,
+                        retentionDays: Number(e.target.value)
+                      }))}
+                      inputProps={{ min: 30, max: 3650 }}
+                    />
+                  </Grid>
+                  <Grid item xs={12}>
+                    <Typography variant="body2" color="text.secondary">
+                      Last purge: {retentionConfig.lastPurgeAt
+                        ? new Date(retentionConfig.lastPurgeAt).toLocaleString()
+                        : 'Never'}
+                      {retentionConfig.lastPurgeDeleted
+                        ? ` (${retentionConfig.lastPurgeDeleted} records removed)`
+                        : ''}
+                    </Typography>
+                  </Grid>
+                  <Grid item xs={12}>
+                    <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                      <Button
+                        variant="contained"
+                        startIcon={<SaveIcon />}
+                        onClick={handleSaveRetention}
+                        disabled={isLoadingRetention}
+                      >
+                        Save Retention Settings
+                      </Button>
+                      <Button
+                        variant="outlined"
+                        color="warning"
+                        startIcon={<WarningIcon />}
+                        onClick={handleRunRetentionPurge}
+                        disabled={isPurgingRetention || !retentionConfig.enabled}
+                      >
+                        {isPurgingRetention ? 'Purging...' : 'Run Purge Now'}
+                      </Button>
+                    </Box>
+                  </Grid>
+                </Grid>
+              </CardContent>
+            </Card>
+          </Grid>
+        )}
 
         <Grid item xs={12} md={6}>
           <Card sx={{ mt: 4 }}>

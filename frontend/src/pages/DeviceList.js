@@ -95,7 +95,7 @@ const DeviceList = () => {
     }
   }, []);
 
-  const ws = useWebSocket(null, handleWebSocketMessage);
+  useWebSocket(null, handleWebSocketMessage);
 
   // Fetch devices and groups from API
   const fetchData = async () => {

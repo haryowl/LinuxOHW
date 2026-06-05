@@ -19,7 +19,7 @@ import {
   ListItemText,
   Chip
 } from '@mui/material';
-import useWebSocket from '../hooks/useWebSocket';
+import { useWebSocketMessage, useWebSocketConnection } from '../hooks/useWebSocket';
 import {
   apiFetchDevicesRaw,
   apiFetchCommandList,
@@ -128,25 +128,16 @@ const CommandCenter = () => {
     ]);
   }, []);
 
-  const ws = useWebSocket(null, handleWebSocketMessage);
+  useWebSocketMessage(handleWebSocketMessage);
+  const { isConnected, send } = useWebSocketConnection();
 
   useEffect(() => {
-    if (!ws || !selectedDevice?.imei) return;
-    const subscribe = () => {
-      ws.send(JSON.stringify({ type: 'subscribe', deviceId: selectedDevice.imei }));
-    };
-    if (ws.readyState === WebSocket.OPEN) {
-      subscribe();
-    } else {
-      ws.addEventListener('open', subscribe);
-    }
+    if (!isConnected || !selectedDevice?.imei) return undefined;
+    send({ type: 'subscribe', deviceId: selectedDevice.imei });
     return () => {
-      ws.removeEventListener('open', subscribe);
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'unsubscribe', deviceId: selectedDevice.imei }));
-      }
+      send({ type: 'unsubscribe', deviceId: selectedDevice.imei });
     };
-  }, [ws, selectedDevice]);
+  }, [isConnected, selectedDevice, send]);
 
   const handleSend = async () => {
     if (selectedDeviceIds.length === 0) {

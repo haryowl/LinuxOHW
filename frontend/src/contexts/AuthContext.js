@@ -3,22 +3,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 
-// Dynamic API URL detection - works for both localhost and IP access
-function getApiBaseUrl() {
-  // Get the current frontend URL
-  const currentUrl = window.location.href;
-  
-  // If accessing from localhost, use localhost backend
-  if (currentUrl.includes('localhost') || currentUrl.includes('127.0.0.1')) {
-    return 'http://localhost:3001';
-  }
-  
-  // If accessing from IP address, use the same IP for backend
-  const url = new URL(currentUrl);
-  return `http://${url.hostname}:3001`;
-}
-
-const API_BASE_URL = getApiBaseUrl();
+import { BASE_URL as API_BASE_URL } from '../config/apiUrl';
 
 const AuthContext = createContext(null);
 

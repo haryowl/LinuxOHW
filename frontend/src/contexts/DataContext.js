@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { useSnackbar } from 'notistack';
-import useWebSocket from '../hooks/useWebSocket';
+import { useWebSocketMessage } from '../hooks/useWebSocket';
 import { BASE_URL } from '../services/api';
 import { useAuth } from './AuthContext';
 
@@ -11,6 +11,7 @@ export function DataProvider({ children }) {
   const [records, setRecords] = useState([]);
   const [alerts, setAlerts] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadingSecondary, setLoadingSecondary] = useState(false);
   const [error, setError] = useState(null);
   const [stats, setStats] = useState({
     totalDevices: 0,
@@ -19,183 +20,141 @@ export function DataProvider({ children }) {
     totalAlerts: 0,
     lastUpdate: null
   });
+  const [serverStatsLoaded, setServerStatsLoaded] = useState(false);
   const { enqueueSnackbar } = useSnackbar();
   const { user, loading: authLoading } = useAuth();
 
-  // WebSocket connection for real-time updates
   const handleWebSocketMessage = useCallback((message) => {
     try {
       const { topic, data } = message;
-      
+
       switch (topic) {
         case 'device_update':
         case 'device_updated':
-          setDevices(prevDevices => {
-            const index = prevDevices.findIndex(d => d.imei === data.imei);
+          setDevices((prevDevices) => {
+            const index = prevDevices.findIndex((d) => d.imei === data.imei);
             if (index >= 0) {
               const updated = [...prevDevices];
               updated[index] = { ...updated[index], ...data };
               return updated;
-            } else {
-              return [...prevDevices, data];
             }
+            return [...prevDevices, data];
           });
-          enqueueSnackbar(`Device ${data.imei} updated`, { variant: 'info' });
           break;
-          
+
         case 'new_record':
-          setRecords(prevRecords => [data, ...prevRecords.slice(0, 999)]); // Keep last 1000 records
-          setStats(prev => ({
+          setRecords((prevRecords) => [data, ...prevRecords.slice(0, 999)]);
+          setStats((prev) => ({
             ...prev,
             totalRecords: prev.totalRecords + 1,
             lastUpdate: new Date()
           }));
           break;
-          
+
         case 'new_alert':
-          setAlerts(prevAlerts => [data, ...prevAlerts.slice(0, 99)]); // Keep last 100 alerts
-          setStats(prev => ({
+          setAlerts((prevAlerts) => [data, ...prevAlerts.slice(0, 99)]);
+          setStats((prev) => ({
             ...prev,
             totalAlerts: prev.totalAlerts + 1,
             lastUpdate: new Date()
           }));
           enqueueSnackbar(`New alert: ${data.message}`, { variant: 'warning' });
           break;
-          
+
         case 'system_status':
-          setStats(prev => ({
+          setStats((prev) => ({
             ...prev,
             ...data,
             lastUpdate: new Date()
           }));
           break;
-          
+
         default:
-          console.log('Unknown WebSocket topic:', topic);
+          break;
       }
-    } catch (error) {
-      console.error('Error processing WebSocket message:', error);
+    } catch (err) {
+      console.error('Error processing WebSocket message:', err);
     }
   }, [enqueueSnackbar]);
 
-  const ws = useWebSocket(user ? `${BASE_URL.replace('http', 'ws')}` : null, handleWebSocketMessage);
+  useWebSocketMessage(handleWebSocketMessage);
 
-  // Fetch initial data
   const fetchDevices = useCallback(async () => {
     try {
-      console.log('🔄 Fetching devices...');
-      const startTime = Date.now();
-      
       const response = await fetch(`${BASE_URL}/api/devices`, {
-        credentials: 'include' // Include cookies in the request
+        credentials: 'include'
       });
-      
+
       if (response.ok) {
-        const devices = await response.json();
-        const loadTime = Date.now() - startTime;
-        console.log(`✅ Devices loaded in ${loadTime}ms:`, devices.length);
-        setDevices(devices);
-        return devices;
-      } else {
-        console.error('Failed to fetch devices:', response.status);
-        return [];
+        const deviceList = await response.json();
+        setDevices(deviceList);
+        return deviceList;
       }
-    } catch (error) {
-      console.error('Error fetching devices:', error);
+      return [];
+    } catch (err) {
+      console.error('Error fetching devices:', err);
       return [];
     }
   }, []);
 
   const fetchRecords = useCallback(async () => {
     try {
-      console.log('📊 fetchRecords: Starting...');
-      const startTime = Date.now();
-      // Fetch only recent records with a reasonable limit to prevent timeout
       const response = await fetch(`${BASE_URL}/api/records?range=1h&limit=100`, {
         credentials: 'include'
       });
-      
+
       if (response.ok) {
         const data = await response.json();
-        const loadTime = Date.now() - startTime;
-        console.log(`📊 fetchRecords: Loaded ${data.length} records in ${loadTime}ms`);
         setRecords(data);
         return data;
-      } else {
-        console.error('📊 fetchRecords: Failed:', response.status);
-        return [];
       }
-    } catch (error) {
-      console.error('📊 fetchRecords: Error:', error);
+      return [];
+    } catch (err) {
+      console.error('Error fetching records:', err);
       return [];
     }
   }, []);
 
   const fetchAlerts = useCallback(async () => {
     try {
-      console.log('🚨 fetchAlerts: Starting...');
-      const startTime = Date.now();
       const response = await fetch(`${BASE_URL}/api/alerts`, {
-        credentials: 'include' // Include cookies in the request
+        credentials: 'include'
       });
       if (!response.ok) {
         if (response.status === 401) {
-          console.log('User not authenticated, skipping alerts fetch');
           setAlerts([]);
           return;
         }
         throw new Error('Failed to fetch alerts');
       }
       const data = await response.json();
-      const loadTime = Date.now() - startTime;
-      console.log(`🚨 fetchAlerts: Loaded ${data.length} alerts in ${loadTime}ms`);
       setAlerts(data);
-    } catch (error) {
-      console.error('🚨 fetchAlerts: Error:', error);
+    } catch (err) {
+      console.error('Error fetching alerts:', err);
       setError('Failed to load alerts');
     }
   }, []);
 
   const fetchStats = useCallback(async () => {
     try {
-      console.log('📈 fetchStats: Starting...');
-      const startTime = Date.now();
       const response = await fetch(`${BASE_URL}/api/dashboard/stats`, {
-        credentials: 'include' // Include cookies in the request
+        credentials: 'include'
       });
       if (!response.ok) {
-        if (response.status === 401) {
-          console.log('User not authenticated, skipping stats fetch');
-          setStats(prev => ({
-            ...prev,
-            lastUpdate: new Date()
-          }));
-          return;
-        }
-        console.warn('Stats endpoint returned error, using default stats');
-        setStats(prev => ({
-          ...prev,
-          lastUpdate: new Date()
-        }));
         return;
       }
       const data = await response.json();
-      const loadTime = Date.now() - startTime;
-      console.log(`📈 fetchStats: Loaded stats in ${loadTime}ms`);
-      setStats({
+      setStats((prev) => ({
+        ...prev,
         ...data,
         lastUpdate: new Date()
-      });
-    } catch (error) {
-      console.error('📈 fetchStats: Error:', error);
-      setStats(prev => ({
-        ...prev,
-        lastUpdate: new Date()
       }));
+      setServerStatsLoaded(true);
+    } catch (err) {
+      console.error('Error fetching stats:', err);
     }
   }, []);
 
-  // Load initial data with optimized loading
   useEffect(() => {
     if (authLoading) {
       setLoading(true);
@@ -207,6 +166,7 @@ export function DataProvider({ children }) {
       setRecords([]);
       setAlerts([]);
       setError(null);
+      setServerStatsLoaded(false);
       setStats({
         totalDevices: 0,
         activeDevices: 0,
@@ -215,100 +175,71 @@ export function DataProvider({ children }) {
         lastUpdate: null
       });
       setLoading(false);
+      setLoadingSecondary(false);
       return undefined;
     }
 
+    let cancelled = false;
+
     const loadData = async () => {
       setLoading(true);
+      setLoadingSecondary(true);
       setError(null);
-      
+
       try {
-        console.log('🚀 Starting initial data load...');
-        const startTime = Date.now();
-        
-        // Load devices first (most important for dashboard)
-        console.log('📱 Starting device fetch...');
-        const devicesPromise = fetchDevices();
-        
-        // Load other data in parallel with individual logging
-        console.log('📊 Starting records fetch...');
-        const recordsPromise = fetchRecords().catch(err => {
-          console.error('❌ Records fetch failed:', err);
-          return [];
-        });
-        
-        console.log('🚨 Starting alerts fetch...');
-        const alertsPromise = fetchAlerts().catch(err => {
-          console.error('❌ Alerts fetch failed:', err);
-          return [];
-        });
-        
-        console.log('📈 Starting stats fetch...');
-        const statsPromise = fetchStats().catch(err => {
-          console.error('❌ Stats fetch failed:', err);
-          return {};
-        });
-        
-        // Wait for all promises with timeout
-        const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Data loading timeout')), 10000)
-        );
-        
-        const [devices, records, alerts, stats] = await Promise.race([
-          Promise.all([devicesPromise, recordsPromise, alertsPromise, statsPromise]),
-          timeoutPromise
-        ]);
-        
-        const totalLoadTime = Date.now() - startTime;
-        console.log(`✅ All data loaded in ${totalLoadTime}ms`);
-        console.log(`📱 Devices: ${devices?.length || 0}`);
-        console.log(`📊 Records: ${records?.length || 0}`);
-        console.log(`🚨 Alerts: ${alerts?.length || 0}`);
-        console.log(`📈 Stats: ${stats ? 'loaded' : 'failed'}`);
-        
-        // If devices loaded successfully, we can show the dashboard
-        if (devices && devices.length > 0) {
-          console.log('📱 Dashboard ready with devices');
+        await fetchDevices();
+        if (!cancelled) {
+          setLoading(false);
         }
-        
-      } catch (error) {
-        console.error('❌ Error loading initial data:', error);
-        setError('Failed to load application data');
+
+        await Promise.all([
+          fetchRecords(),
+          fetchAlerts(),
+          fetchStats()
+        ]);
+      } catch (err) {
+        if (!cancelled) {
+          setError('Failed to load application data');
+        }
       } finally {
-        console.log('🏁 Setting loading to false');
-        setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+          setLoadingSecondary(false);
+        }
       }
     };
 
     loadData();
-    return undefined;
+    return () => {
+      cancelled = true;
+    };
   }, [authLoading, user, fetchDevices, fetchRecords, fetchAlerts, fetchStats]);
 
-  // Refresh data periodically with optimized intervals
   useEffect(() => {
     if (authLoading || !user) {
       return undefined;
     }
 
     const interval = setInterval(() => {
-      // Only refresh stats, not all data
       fetchStats();
-    }, 30000); // Refresh stats every 30 seconds
+    }, 30000);
 
     return () => clearInterval(interval);
   }, [authLoading, user, fetchStats]);
 
-  // Update stats when data changes
   useEffect(() => {
-    setStats(prev => ({
+    if (serverStatsLoaded) {
+      return;
+    }
+    setStats((prev) => ({
       ...prev,
       totalDevices: devices.length,
-      activeDevices: devices.filter(d => d.status === 'active').length,
+      activeDevices: devices.filter((d) => d.status === 'active').length,
       totalRecords: records.length,
       totalAlerts: alerts.length,
       lastUpdate: new Date()
     }));
-  }, [devices, records, alerts]);
+  }, [devices, records, alerts, serverStatsLoaded]);
 
   const value = {
     devices,
@@ -316,12 +247,12 @@ export function DataProvider({ children }) {
     alerts,
     stats,
     loading,
+    loadingSecondary,
     error,
     refreshDevices: fetchDevices,
     refreshRecords: fetchRecords,
     refreshAlerts: fetchAlerts,
-    refreshStats: fetchStats,
-    ws
+    refreshStats: fetchStats
   };
 
   return (
@@ -337,4 +268,4 @@ export const useData = () => {
     throw new Error('useData must be used within a DataProvider');
   }
   return context;
-}; 
+};

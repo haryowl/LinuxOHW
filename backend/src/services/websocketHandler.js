@@ -3,23 +3,43 @@
 const WebSocket = require('ws');
 const config = require('../config');
 const logger = require('../utils/logger');
+const sessionStore = require('../utils/sessionStore');
+const { resolveAccessibleDeviceImeis, canAccessDeviceImei } = require('../utils/accessibleDevices');
+
+function parseCookies(cookieHeader) {
+    const cookies = {};
+    if (!cookieHeader) {
+        return cookies;
+    }
+    cookieHeader.split(';').forEach((part) => {
+        const [key, ...rest] = part.trim().split('=');
+        if (key) {
+            cookies[key] = decodeURIComponent(rest.join('='));
+        }
+    });
+    return cookies;
+}
 
 class WebSocketHandler {
     constructor() {
-        this.clients = new Map(); // deviceId -> Set of clients
-        this.statistics = new Map(); // deviceId -> statistics
+        this.clients = new Map();
+        this.statistics = new Map();
     }
 
     initialize(server) {
-        this.wss = new WebSocket.Server({ 
+        this.wss = new WebSocket.Server({
             server,
             path: '/ws',
             clientTracking: true
         });
-        
-        this.wss.on('connection', this.handleConnection.bind(this));
 
-        // Setup heartbeat interval
+        this.wss.on('connection', (ws, req) => {
+            this.handleConnection(ws, req).catch((error) => {
+                logger.error('WebSocket connection setup failed:', error);
+                ws.close(1011, 'Connection setup failed');
+            });
+        });
+
         setInterval(() => {
             this.checkConnections();
         }, config.websocket.heartbeatInterval);
@@ -39,11 +59,30 @@ class WebSocketHandler {
         });
     }
 
-    handleConnection(ws, req) {
+    async handleConnection(ws, req) {
+        const cookies = parseCookies(req.headers.cookie);
+        const token = cookies.sessionToken;
+
+        if (!token) {
+            ws.close(4401, 'Authentication required');
+            return;
+        }
+
+        const session = await sessionStore.get(token);
+        if (!session) {
+            ws.close(4401, 'Authentication required');
+            return;
+        }
+
         ws.isAlive = true;
         ws.ip = req.socket.remoteAddress;
+        ws.user = session;
+        ws.accessibleImeis = await resolveAccessibleDeviceImeis(session);
 
-        logger.debug(`New WebSocket connection from ${ws.ip}`);
+        logger.debug(`Authenticated WebSocket connection from ${ws.ip}`, {
+            username: session.username,
+            role: session.role
+        });
 
         ws.on('pong', () => {
             ws.isAlive = true;
@@ -63,6 +102,30 @@ class WebSocketHandler {
         });
     }
 
+    extractImei(topic, data) {
+        if (!data) {
+            return null;
+        }
+        return data.imei || data.deviceImei || data.deviceId || null;
+    }
+
+    canClientReceive(client, topic, data) {
+        if (!client.user) {
+            return false;
+        }
+
+        if (client.user.role === 'admin' || client.accessibleImeis === null) {
+            return true;
+        }
+
+        const imei = this.extractImei(topic, data);
+        if (!imei) {
+            return topic === 'system_status' || topic === 'archivestat_update';
+        }
+
+        return canAccessDeviceImei(client.accessibleImeis, imei);
+    }
+
     handleMessage(ws, message) {
         switch (message.type) {
             case 'subscribe':
@@ -77,6 +140,18 @@ class WebSocketHandler {
     }
 
     subscribeToDevice(ws, deviceId) {
+        if (!ws.user || !deviceId) {
+            return;
+        }
+
+        if (!canAccessDeviceImei(ws.accessibleImeis, deviceId)) {
+            logger.warn('WebSocket subscribe denied', {
+                username: ws.user.username,
+                deviceId
+            });
+            return;
+        }
+
         if (!this.clients.has(deviceId)) {
             this.clients.set(deviceId, new Set());
         }
@@ -97,7 +172,7 @@ class WebSocketHandler {
 
     handleDisconnect(ws) {
         if (ws.subscribedDevices) {
-            ws.subscribedDevices.forEach(deviceId => {
+            ws.subscribedDevices.forEach((deviceId) => {
                 const deviceClients = this.clients.get(deviceId);
                 if (deviceClients) {
                     deviceClients.delete(ws);
@@ -117,8 +192,8 @@ class WebSocketHandler {
             data
         });
 
-        this.wss.clients.forEach(client => {
-            if (client.readyState === WebSocket.OPEN) {
+        this.wss.clients.forEach((client) => {
+            if (client.readyState === WebSocket.OPEN && this.canClientReceive(client, topic, data)) {
                 client.send(message);
             }
         });
@@ -134,8 +209,8 @@ class WebSocketHandler {
                 topic: data?.topic
             });
 
-            clients.forEach(client => {
-                if (client.readyState === WebSocket.OPEN) {
+            clients.forEach((client) => {
+                if (client.readyState === WebSocket.OPEN && this.canClientReceive(client, data?.topic, { ...data, imei: deviceId })) {
                     client.send(message);
                 }
             });

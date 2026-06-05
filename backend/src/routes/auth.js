@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const { User } = require('../models');
 const logger = require('../utils/logger');
 const sessionStore = require('../utils/sessionStore');
+const { getSessionCookieOptions } = require('../utils/cookieOptions');
 
 // Helper function to generate secure session token using crypto.randomBytes
 function generateToken() {
@@ -115,21 +116,9 @@ router.post('/login', loginRateLimit, async (req, res) => {
         await user.update({ lastLogin: new Date() });
         
         // Clear any existing sessionToken cookie first
-        res.clearCookie('sessionToken', {
-            httpOnly: true,
-            secure: false,
-            sameSite: 'lax',
-            domain: undefined
-        });
-        
-        // Set session cookie
-        res.cookie('sessionToken', token, {
-            httpOnly: true,
-            secure: false, // Set to false for HTTP connections
-            sameSite: 'lax', // Use 'lax' for HTTP connections
-            maxAge: 24 * 60 * 60 * 1000, // 24 hours
-            domain: undefined // Remove domain restriction
-        });
+        const cookieOptions = getSessionCookieOptions();
+        res.clearCookie('sessionToken', cookieOptions);
+        res.cookie('sessionToken', token, cookieOptions);
         
         // Return user data (without password)
         const userData = {
@@ -171,13 +160,7 @@ router.post('/logout', async (req, res) => {
         }
         
         // Clear session cookie
-        res.clearCookie('sessionToken', {
-            httpOnly: true,
-            secure: false,
-            sameSite: 'lax',
-            domain: undefined
-        });
-        
+        res.clearCookie('sessionToken', getSessionCookieOptions());
         res.json({ message: 'Logged out successfully' });
         
     } catch (error) {

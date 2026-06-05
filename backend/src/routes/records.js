@@ -1,4 +1,6 @@
 const express = require('express');
+const path = require('path');
+const fs = require('fs');
 const router = express.Router();
 const { Record, Device, DeviceGroup, UserDeviceAccess, UserDeviceGroupAccess } = require('../models');
 const { Op } = require('sequelize');
@@ -7,6 +9,9 @@ const ExcelJS = require('exceljs');
 const { requireAuth } = require('./auth');
 const { filterDevicesByPermission } = require('../middleware/permissions');
 const logger = require('../utils/logger');
+
+const EXPORT_MAX_ROWS = 50000;
+const PREVIEW_MAX_ROWS = 1000;
 
 function buildMergeKey(record) {
     const deviceImei = record.deviceImei || '';
@@ -130,97 +135,24 @@ router.get('/', requireAuth, filterDevicesByPermission, async (req, res) => {
         const requestStart = Date.now();
         logger.debug('GET /api/records - Starting request', { username: req.user.username });
         
-        let { startDate, endDate, limit = 100, range, imeis } = req.query;
+        let { startDate, endDate, limit = 100, range, imeis, offset: offsetParam, paginated } = req.query;
+        const isPaginated = paginated === '1' || paginated === 'true';
+        const queryOffset = Math.max(0, parseInt(offsetParam, 10) || 0);
         const where = {};
         const now = new Date();
         
-        // Filter by user permissions - only show records from accessible devices
-        let accessibleDeviceImeis = [];
-        
-        if (req.user.role === 'admin') {
+        let accessibleDeviceImeis = req.accessibleDeviceImeis;
+
+        if (accessibleDeviceImeis === null) {
             logger.debug('Admin user - getting all records');
         } else {
-            logger.debug('Non-admin user - filtering records by permissions');
-            
-            // Get devices from permissions
-            if (req.userPermissions.devices && req.userPermissions.devices.length > 0) {
-                accessibleDeviceImeis.push(...req.userPermissions.devices);
-            }
-            
-            // Get devices from device groups
-            if (req.userPermissions.deviceGroups && req.userPermissions.deviceGroups.length > 0) {
-                const deviceGroups = await DeviceGroup.findAll({
-                    where: { id: req.userPermissions.deviceGroups },
-                    include: ['devices']
-                });
-                
-                for (const group of deviceGroups) {
-                    if (group.devices) {
-                        accessibleDeviceImeis.push(...group.devices.map(device => device.imei));
-                    }
-                }
-            }
-            
-            // Get devices from UserDeviceAccess table
-            const { UserDeviceAccess } = require('../models');
-            const userDeviceAccess = await UserDeviceAccess.findAll({
-                where: { 
-                    userId: req.user.userId,
-                    isActive: true
-                },
-                include: [
-                    {
-                        model: Device,
-                        as: 'device',
-                        attributes: ['imei']
-                    }
-                ]
-            });
-            
-            for (const access of userDeviceAccess) {
-                if (access.device && !accessibleDeviceImeis.includes(access.device.imei)) {
-                    accessibleDeviceImeis.push(access.device.imei);
-                }
-            }
-            
-            // Get devices from UserDeviceGroupAccess table
-            const { UserDeviceGroupAccess } = require('../models');
-            const userGroupAccess = await UserDeviceGroupAccess.findAll({
-                where: { 
-                    userId: req.user.userId,
-                    isActive: true
-                },
-                include: [
-                    {
-                        model: DeviceGroup,
-                        as: 'group',
-                        include: ['devices']
-                    }
-                ]
-            });
-            
-            for (const access of userGroupAccess) {
-                if (access.group && access.group.devices) {
-                    for (const device of access.group.devices) {
-                        if (!accessibleDeviceImeis.includes(device.imei)) {
-                            accessibleDeviceImeis.push(device.imei);
-                        }
-                    }
-                }
-            }
-            
-            // Remove duplicates
-            accessibleDeviceImeis = [...new Set(accessibleDeviceImeis)];
-            
-            // Add device filter to where clause
+            accessibleDeviceImeis = accessibleDeviceImeis || [];
             if (accessibleDeviceImeis.length > 0) {
                 where.deviceImei = { [Op.in]: accessibleDeviceImeis };
             } else {
-                // No accessible devices - return empty result
                 where.deviceImei = { [Op.in]: [] };
             }
-            
-            logger.debug('User device access calculated', { deviceCount: accessibleDeviceImeis.length });
+            logger.debug('User device access applied', { deviceCount: accessibleDeviceImeis.length });
         }
         
         // Better defaults to prevent massive queries
@@ -266,13 +198,12 @@ router.get('/', requireAuth, filterDevicesByPermission, async (req, res) => {
         }
         
         // Better limit handling to prevent massive queries
-        let queryLimit = parseInt(limit);
+        let queryLimit = parseInt(limit, 10);
+        const maxPreviewLimit = isPaginated ? PREVIEW_MAX_ROWS : 1000;
         if (limit === 'all' || queryLimit === 0 || isNaN(queryLimit)) {
-            // Cap at 1000 records for 'all' requests to prevent timeout
-            queryLimit = 1000;
-        } else if (queryLimit > 1000) {
-            // Cap at 1000 records maximum
-            queryLimit = 1000;
+            queryLimit = maxPreviewLimit;
+        } else if (queryLimit > maxPreviewLimit) {
+            queryLimit = maxPreviewLimit;
         }
         
         logger.debug('Records query parameters', { range: range || 'custom', limit: queryLimit });
@@ -295,6 +226,7 @@ router.get('/', requireAuth, filterDevicesByPermission, async (req, res) => {
             where,
             order: [['datetime', 'DESC']],
             limit: queryLimit,
+            offset: isPaginated ? queryOffset : 0,
             attributes: availableAttributes
         });
         
@@ -303,6 +235,15 @@ router.get('/', requireAuth, filterDevicesByPermission, async (req, res) => {
 
         const dbTime = Date.now() - dbStart;
         const totalTime = Date.now() - requestStart;
+
+        if (isPaginated) {
+            return res.json({
+                records: outputRecords,
+                limit: queryLimit,
+                offset: queryOffset,
+                hasMore: outputRecords.length === queryLimit
+            });
+        }
         
         logger.info('Records query completed', { 
             dbTime: `${dbTime}ms`, 
@@ -407,9 +348,11 @@ router.post('/export', requireAuth, filterDevicesByPermission, async (req, res) 
         const records = await Record.findAll({
             where,
             attributes: allFields,
-            order: [['datetime', 'DESC']] // Order by device datetime instead of server timestamp
+            order: [['datetime', 'DESC']],
+            limit: EXPORT_MAX_ROWS
         });
 
+        const truncated = records.length === EXPORT_MAX_ROWS;
         const data = mergeRecords(records);
         const selectedData = data.map(row => {
             const filtered = {};
@@ -419,6 +362,11 @@ router.post('/export', requireAuth, filterDevicesByPermission, async (req, res) 
             return filtered;
         });
         
+        if (truncated) {
+            res.setHeader('X-Export-Truncated', 'true');
+            res.setHeader('X-Export-Max-Rows', String(EXPORT_MAX_ROWS));
+        }
+
         if (format === 'csv') {
             const parser = new Json2csvParser({ fields });
             const csv = parser.parse(selectedData);
@@ -592,11 +540,12 @@ router.post('/export-sm', requireAuth, filterDevicesByPermission, async (req, re
         const records = await Record.findAll({
             where,
             attributes: allFields,
-            order: [['datetime', 'DESC']]
+            order: [['datetime', 'DESC']],
+            limit: EXPORT_MAX_ROWS
         });
 
         const mergedRecords = mergeRecords(records);
-        logger.debug('Records found for export', { count: records.length, mergedCount: mergedRecords.length });
+        logger.debug('Records found for export', { count: records.length, mergedCount: mergedRecords.length, truncated: records.length === EXPORT_MAX_ROWS });
         
         // Filter out records that only have IMEI and timestamp (no meaningful data)
         const filteredRecords = mergedRecords.filter(record => {
@@ -730,6 +679,65 @@ router.post('/export-sm', requireAuth, filterDevicesByPermission, async (req, re
             details: error.message 
         });
     }
+});
+
+const exportRecordsService = require('../services/exportRecordsService');
+
+router.post('/export/async', requireAuth, filterDevicesByPermission, async (req, res) => {
+    try {
+        const { startDate, endDate, format, fields, imeis } = req.body;
+        if (!fields || !Array.isArray(fields) || fields.length === 0) {
+            return res.status(400).json({ error: 'Export fields are required' });
+        }
+
+        const job = exportRecordsService.createExportJob(req, {
+            startDate,
+            endDate,
+            format: format || 'csv',
+            fields,
+            imeis
+        });
+
+        res.status(202).json(job);
+    } catch (error) {
+        logger.error('Failed to queue export job:', error);
+        res.status(500).json({ error: 'Failed to queue export job' });
+    }
+});
+
+router.get('/export/jobs/:jobId', requireAuth, async (req, res) => {
+    const job = exportRecordsService.getExportJobStatus(
+        req.params.jobId,
+        req.user.userId,
+        req.user.role === 'admin'
+    );
+
+    if (!job) {
+        return res.status(404).json({ error: 'Export job not found' });
+    }
+
+    res.json(job);
+});
+
+router.get('/export/jobs/:jobId/download', requireAuth, async (req, res) => {
+    const job = exportRecordsService.getExportJob(
+        req.params.jobId,
+        req.user.userId,
+        req.user.role === 'admin'
+    );
+
+    if (!job || job.status !== 'completed' || !job.filePath || !fs.existsSync(job.filePath)) {
+        return res.status(404).json({ error: 'Export file not ready' });
+    }
+
+    if (job.truncated) {
+        res.setHeader('X-Export-Truncated', 'true');
+        res.setHeader('X-Export-Max-Rows', String(exportRecordsService.EXPORT_MAX_ROWS));
+    }
+
+    res.setHeader('Content-Type', job.mimeType || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `attachment; filename="records-export.${job.extension || 'csv'}"`);
+    res.sendFile(path.resolve(job.filePath));
 });
 
 module.exports = router;

@@ -14,6 +14,9 @@ const logger = require('./utils/logger');
 const config = require('./config');
 
 const { app, tcpServer } = require('./app');
+const { ensureRecordIndexes } = require('./utils/ensureRecordIndexes');
+const recordRetention = require('./services/recordRetention');
+const { buildSequelizeOptions } = require('./config/database');
 
 // Middleware - CORS is already configured in app.js
 app.use(express.json());
@@ -49,6 +52,17 @@ async function startServer() {
         // Sync database
         await sequelize.sync();
         logger.info('Database synced');
+
+        await ensureRecordIndexes(sequelize);
+
+        const dbConfig = buildSequelizeOptions();
+        if (!dbConfig.url) {
+            await sequelize.query('PRAGMA journal_mode = WAL;');
+            await sequelize.query('PRAGMA busy_timeout = 5000;');
+        }
+
+        recordRetention.start();
+        logger.info('Database indexes and retention scheduler ensured');
 
         // Get HTTP server from app.js (already started)
         const { httpServer, gracefulShutdown: appShutdown } = require('./app');

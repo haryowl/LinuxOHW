@@ -40,7 +40,7 @@ import DataChart from '../components/DataChart';
 import LoadingState from '../components/LoadingState';
 
 const Dashboard = () => {
-  const { devices, records, alerts, stats, loading, error, refreshStats } = useData();
+  const { devices, records, alerts, stats, loading, loadingSecondary, error, refreshStats } = useData();
   const { enqueueSnackbar } = useSnackbar();
   const [lastRefresh, setLastRefresh] = useState(new Date());
   const [statsRange, setStatsRange] = useState('last24h'); // 'last24h' or 'allTime'
@@ -108,7 +108,7 @@ const Dashboard = () => {
     return `${days}d ago`;
   };
 
-  if (loading) {
+  if (loading && devices.length === 0) {
     return <LoadingState message="Loading dashboard..." />;
   }
 
@@ -124,6 +124,9 @@ const Dashboard = () => {
 
   return (
     <Container maxWidth="xl" sx={{ mt: 1, mb: 2 }}>
+      {loadingSecondary && (
+        <LinearProgress sx={{ mb: 1, borderRadius: 1 }} />
+      )}
       {/* Header */}
       <Box sx={{ 
         display: 'flex', 

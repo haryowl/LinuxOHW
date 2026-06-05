@@ -15,22 +15,12 @@ const defineUserDeviceGroupAccess = require('./userDeviceGroupAccess');
 const defineRole = require('./role');
 const defineDeviceCommand = require('./deviceCommand');
 
-const path = require('path');
+const { buildSequelizeOptions } = require('../config/database');
 
-// Database configuration
-const dbConfig = {
-    dialect: 'sqlite',
-    storage: process.env.NODE_ENV === 'production' 
-        ? path.join(__dirname, '..', '..', 'data', 'prod.sqlite')
-        : path.join(__dirname, '..', '..', 'data', 'dev.sqlite'),
-    logging: msg => logger.debug(msg)
-};
-
-// Initialize Sequelize
-const sequelize = new Sequelize({
-    ...dbConfig,
-    logging: msg => logger.debug(msg)
-});
+const dbConfig = buildSequelizeOptions();
+const sequelize = dbConfig.url
+    ? new Sequelize(dbConfig.url, dbConfig.options)
+    : new Sequelize(dbConfig.options);
 
 // Initialize models
 const Device = defineDevice(sequelize);

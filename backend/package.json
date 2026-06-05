@@ -27,6 +27,8 @@
     "json2csv": "^6.0.0-alpha.2",
     "jsonwebtoken": "^9.0.2",
     "node-cron": "^4.2.1",
+    "pg": "^8.13.1",
+    "pg-hstore": "^2.3.4",
     "sequelize": "^6.37.7",
     "sqlite3": "^5.1.7",
     "superagent": "^8.0.9",

@@ -27,11 +27,17 @@ import {
 import FileDownloadIcon from '@mui/icons-material/FileDownload';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import axios from 'axios';
-import { BASE_URL } from '../services/api';
+import { useSnackbar } from 'notistack';
+import { BASE_URL, startAsyncExport, fetchExportJobStatus, getExportJobDownloadUrl } from '../services/api';
+
+const PREVIEW_PAGE_SIZE = 100;
 
 const DataExport = () => {
+  const { enqueueSnackbar } = useSnackbar();
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [previewPage, setPreviewPage] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
   const [startDate, setStartDate] = useState(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]);
   const [endDate, setEndDate] = useState(new Date().toISOString().split('T')[0]);
   const [selectedFields, setSelectedFields] = useState({
@@ -91,6 +97,8 @@ const DataExport = () => {
   const [availableImeis, setAvailableImeis] = useState([]);
   const [selectedImeis, setSelectedImeis] = useState([]);
   const [imeiLoading, setImeiLoading] = useState(false);
+  const [backgroundExporting, setBackgroundExporting] = useState(false);
+  const [exportJobStatus, setExportJobStatus] = useState(null);
 
   const fieldGroups = {
     'Basic Information': ['timestamp', 'datetime', 'deviceImei', 'recordNumber', 'latitude', 'longitude', 'speed', 'direction', 'altitude', 'course', 'satellites', 'hdop', 'status'],
@@ -113,28 +121,33 @@ const DataExport = () => {
     return date.toISOString();
   };
 
-  const fetchData = async () => {
+  const fetchData = async (page = previewPage) => {
     setLoading(true);
     try {
       const params = {
         startDate: toStartOfDayIso(startDate),
         endDate: toEndOfDayIso(endDate),
         merge: '1',
-        limit: 1000,
+        limit: PREVIEW_PAGE_SIZE,
+        offset: page * PREVIEW_PAGE_SIZE,
+        paginated: '1',
       };
-      
-      // Add IMEI filtering if selected
+
       if (selectedImeis.length > 0) {
         params.imeis = selectedImeis.join(',');
       }
-      
-      const response = await axios.get(`${BASE_URL}/api/records`, { 
+
+      const response = await axios.get(`${BASE_URL}/api/records`, {
         params,
         withCredentials: true
       });
-      setRecords(response.data);
+      const payload = response.data;
+      setRecords(payload.records || []);
+      setHasMore(Boolean(payload.hasMore));
+      setPreviewPage(page);
     } catch (error) {
       console.error('Error fetching data:', error);
+      enqueueSnackbar('Failed to load preview data', { variant: 'error' });
     }
     setLoading(false);
   };
@@ -156,9 +169,82 @@ const DataExport = () => {
   };
 
   useEffect(() => {
-    fetchData();
     fetchAvailableImeis();
   }, []);
+
+  const pollExportJob = async (jobId) => {
+    const maxAttempts = 120;
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      const response = await fetchExportJobStatus(jobId);
+      if (!response.ok) {
+        throw new Error('Failed to check export job status');
+      }
+      const status = await response.json();
+      setExportJobStatus(status);
+
+      if (status.status === 'completed') {
+        return status;
+      }
+      if (status.status === 'failed') {
+        throw new Error(status.error || 'Background export failed');
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
+    throw new Error('Background export timed out');
+  };
+
+  const handleBackgroundExport = async () => {
+    setBackgroundExporting(true);
+    setExportJobStatus(null);
+    try {
+      const response = await startAsyncExport({
+        startDate: toStartOfDayIso(startDate),
+        endDate: toEndOfDayIso(endDate),
+        format: exportFormat,
+        fields: Object.entries(selectedFields)
+          .filter(([_, selected]) => selected)
+          .map(([field]) => field),
+        imeis: selectedImeis.length > 0 ? selectedImeis : undefined,
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to start background export');
+      }
+
+      const job = await response.json();
+      enqueueSnackbar('Background export started', { variant: 'info' });
+      const completedJob = await pollExportJob(job.id);
+
+      const downloadResponse = await fetch(getExportJobDownloadUrl(job.id), {
+        credentials: 'include'
+      });
+
+      if (!downloadResponse.ok) {
+        throw new Error('Failed to download export file');
+      }
+
+      const blob = await downloadResponse.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `data-export.${exportFormat === 'excel' ? 'xlsx' : exportFormat}`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+
+      if (completedJob.truncated) {
+        enqueueSnackbar('Export capped at server maximum rows', { variant: 'warning' });
+      } else {
+        enqueueSnackbar(`Export ready (${completedJob.rowCount || 0} rows)`, { variant: 'success' });
+      }
+    } catch (error) {
+      console.error('Background export error:', error);
+      enqueueSnackbar(error.message || 'Background export failed', { variant: 'error' });
+    } finally {
+      setBackgroundExporting(false);
+    }
+  };
 
   const handleExport = async () => {
     try {
@@ -188,6 +274,7 @@ const DataExport = () => {
       link.remove();
     } catch (error) {
       console.error('Error exporting data:', error);
+      enqueueSnackbar('Export failed. Try a smaller date range.', { variant: 'error' });
     }
   };
 
@@ -292,14 +379,28 @@ const DataExport = () => {
               </Typography>
             )}
           </Grid>
-          <Grid item xs={12}>
+          <Grid item xs={12} md={6}>
             <Button
               variant="contained"
               startIcon={<FileDownloadIcon />}
               onClick={handleExport}
               fullWidth
+              disabled={backgroundExporting}
             >
-              Export Data
+              Quick Export
+            </Button>
+          </Grid>
+          <Grid item xs={12} md={6}>
+            <Button
+              variant="outlined"
+              startIcon={<FileDownloadIcon />}
+              onClick={handleBackgroundExport}
+              fullWidth
+              disabled={backgroundExporting}
+            >
+              {backgroundExporting
+                ? `Background Export${exportJobStatus ? ` (${exportJobStatus.progress || 0}%)` : '...'}`
+                : 'Background Export (large ranges)'}
             </Button>
           </Grid>
         </Grid>
@@ -332,15 +433,36 @@ const DataExport = () => {
       </Paper>
 
       <Paper sx={{ p: 3 }}>
-        <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
-          <Typography variant="h6">Data Preview</Typography>
-          <Button
-            startIcon={<RefreshIcon />}
-            onClick={fetchData}
-            disabled={loading}
-          >
-            Refresh
-          </Button>
+        <Box display="flex" justifyContent="space-between" alignItems="center" mb={2} flexWrap="wrap" gap={1}>
+          <Box>
+            <Typography variant="h6">Data Preview</Typography>
+            <Typography variant="caption" color="text.secondary">
+              Click Load Preview to fetch data. Showing {PREVIEW_PAGE_SIZE} rows per page.
+            </Typography>
+          </Box>
+          <Box display="flex" gap={1} alignItems="center">
+            <Button
+              startIcon={<RefreshIcon />}
+              onClick={() => fetchData(0)}
+              disabled={loading}
+              variant="outlined"
+            >
+              Load Preview
+            </Button>
+            <Button
+              onClick={() => fetchData(Math.max(0, previewPage - 1))}
+              disabled={loading || previewPage === 0}
+            >
+              Previous
+            </Button>
+            <Typography variant="body2">Page {previewPage + 1}</Typography>
+            <Button
+              onClick={() => fetchData(previewPage + 1)}
+              disabled={loading || !hasMore}
+            >
+              Next
+            </Button>
+          </Box>
         </Box>
         <TableContainer>
           <Table>

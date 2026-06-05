@@ -7,6 +7,11 @@ const fs = require('fs');
 const path = require('path');
 const cron = require('node-cron');
 const logger = require('../utils/logger');
+const { requireAuth } = require('./auth');
+const { checkMenuAccess } = require('../middleware/permissions');
+
+router.use(requireAuth);
+router.use(checkMenuAccess('data-sm'));
 
 // Store auto-export configurations
 const autoExportConfigs = new Map();

@@ -1,7 +1,14 @@
     // backend/src/routes/settings.js
     const express = require('express');
     const router = express.Router();
-    const asyncHandler = require('../utils/asyncHandler'); // Import your async error handler
+    const asyncHandler = require('../utils/asyncHandler');
+    const { requireAuth } = require('./auth');
+    const { checkMenuAccess, requireAdmin } = require('../middleware/permissions');
+    const { getRetentionConfig, updateRetentionConfig } = require('../services/retentionConfig');
+    const recordRetention = require('../services/recordRetention');
+
+    router.use(requireAuth);
+    router.use(checkMenuAccess('settings'));
     const fs = require('fs').promises;
     const path = require('path');
     const os = require('os');
@@ -222,6 +229,21 @@
     router.get('/data-forwarder/logs', asyncHandler(async (req, res) => {
         const logs = getForwarderLogs(50);
         res.json({ logs });
+    }));
+
+    router.get('/retention', requireAdmin, asyncHandler(async (req, res) => {
+        res.json(getRetentionConfig());
+    }));
+
+    router.put('/retention', requireAdmin, asyncHandler(async (req, res) => {
+        const { enabled, retentionDays } = req.body;
+        const config = updateRetentionConfig({ enabled, retentionDays });
+        res.json({ message: 'Retention settings updated', config });
+    }));
+
+    router.post('/retention/purge', requireAdmin, asyncHandler(async (req, res) => {
+        const result = await recordRetention.purgeOldRecords();
+        res.json({ message: 'Retention purge completed', result });
     }));
 
     module.exports = router;

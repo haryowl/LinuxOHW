@@ -27,7 +27,9 @@ class SQLiteSessionStore {
                 userId INTEGER NOT NULL,
                 username TEXT NOT NULL,
                 role TEXT NOT NULL,
+                roleId INTEGER,
                 permissions TEXT,
+                mustChangePassword INTEGER DEFAULT 0,
                 createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
                 lastAccessed DATETIME DEFAULT CURRENT_TIMESTAMP
             )
@@ -38,16 +40,31 @@ class SQLiteSessionStore {
                 logger.error('Error creating sessions table:', err);
             } else {
                 logger.info('Sessions table created/verified successfully');
+                this.ensureSessionColumns();
                 this.cleanupExpiredSessions();
             }
+        });
+    }
+
+    ensureSessionColumns() {
+        const columns = [
+            'ALTER TABLE sessions ADD COLUMN roleId INTEGER',
+            'ALTER TABLE sessions ADD COLUMN mustChangePassword INTEGER DEFAULT 0'
+        ];
+        columns.forEach((sql) => {
+            this.db.run(sql, (err) => {
+                if (err && !String(err.message).includes('duplicate column')) {
+                    logger.debug('Session column migration note:', err.message);
+                }
+            });
         });
     }
 
     set(token, session) {
         return new Promise((resolve, reject) => {
             const sql = `
-                INSERT OR REPLACE INTO sessions (token, userId, username, role, permissions, lastAccessed)
-                VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                INSERT OR REPLACE INTO sessions (token, userId, username, role, roleId, permissions, mustChangePassword, lastAccessed)
+                VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             `;
             
             this.db.run(sql, [
@@ -55,7 +72,9 @@ class SQLiteSessionStore {
                 session.userId,
                 session.username,
                 session.role,
-                JSON.stringify(session.permissions || {})
+                session.roleId || null,
+                JSON.stringify(session.permissions || {}),
+                session.mustChangePassword ? 1 : 0
             ], function(err) {
                 if (err) {
                     logger.error('Error storing session:', err);
@@ -93,7 +112,9 @@ class SQLiteSessionStore {
                         userId: row.userId,
                         username: row.username,
                         role: row.role,
+                        roleId: row.roleId || null,
                         permissions: row.permissions ? JSON.parse(row.permissions) : {},
+                        mustChangePassword: row.mustChangePassword === 1,
                         createdAt: new Date(row.createdAt)
                     };
                     

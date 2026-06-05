@@ -1,32 +1,9 @@
 // frontend/src/services/api.js
 
-// Dynamic API URL detection - works for both localhost and IP access
-// Using the same logic as AuthContext.js since that's working correctly
-function getApiBaseUrl() {
-  // Get the current frontend URL
-  const currentUrl = window.location.href;
-  console.log('🔍 Current URL:', currentUrl);
-  console.log('🔍 Hostname:', window.location.hostname);
-  
-  // If accessing from localhost, use localhost backend
-  if (currentUrl.includes('localhost') || currentUrl.includes('127.0.0.1')) {
-    console.log('🔍 API URL Detection: Using localhost backend');
-    return 'http://localhost:3001';
-  }
-  
-  // If accessing from IP address, use the same IP for backend
-  const url = new URL(currentUrl);
-  const detectedUrl = `http://${url.hostname}:3001`;
-  console.log('🔍 API URL Detection: Using IP backend:', detectedUrl);
-  return detectedUrl;
-}
-
-// API URL configuration - Force dynamic detection, ignore environment variables
-const API_BASE_URL = getApiBaseUrl();
+import { BASE_URL as API_BASE_URL } from '../config/apiUrl';
 
 export const BASE_URL = API_BASE_URL;
-
-console.log('🚀 Final API Base URL:', BASE_URL);
+export { getWebSocketUrl } from '../config/apiUrl';
 
 // Helper function to get auth headers (for cookie-based auth, we don't need Authorization header)
 function getAuthHeaders() {
@@ -203,6 +180,38 @@ export async function updateDataForwarderConfig(config) {
 export async function fetchDataForwarderLogs() {
   const response = await authenticatedFetch(`${BASE_URL}/api/settings/data-forwarder/logs`);
   return response;
+}
+
+export async function fetchRetentionConfig() {
+  return authenticatedFetch(`${BASE_URL}/api/settings/retention`);
+}
+
+export async function updateRetentionConfig(config) {
+  return authenticatedFetch(`${BASE_URL}/api/settings/retention`, {
+    method: 'PUT',
+    body: JSON.stringify(config),
+  });
+}
+
+export async function runRetentionPurge() {
+  return authenticatedFetch(`${BASE_URL}/api/settings/retention/purge`, {
+    method: 'POST',
+  });
+}
+
+export async function startAsyncExport(payload) {
+  return authenticatedFetch(`${BASE_URL}/api/records/export/async`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function fetchExportJobStatus(jobId) {
+  return authenticatedFetch(`${BASE_URL}/api/records/export/jobs/${jobId}`);
+}
+
+export function getExportJobDownloadUrl(jobId) {
+  return `${BASE_URL}/api/records/export/jobs/${jobId}/download`;
 }
 
 // Device Group Management API Functions

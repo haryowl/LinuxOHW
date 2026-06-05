@@ -17,9 +17,11 @@ import {
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import FileDownloadIcon from '@mui/icons-material/FileDownload';
+import { useSnackbar } from 'notistack';
 import { BASE_URL } from '../services/api';
 
 const DataTable = () => {
+    const { enqueueSnackbar } = useSnackbar();
     const [records, setRecords] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
@@ -35,7 +37,7 @@ const DataTable = () => {
     const fetchRecords = async () => {
         try {
             const apiUrl = BASE_URL;
-            const response = await fetch(`${apiUrl}/api/records`);
+            const response = await fetch(`${apiUrl}/api/records?range=1h&limit=100`);
             if (!response.ok) {
                 throw new Error('Failed to fetch records');
             }
@@ -46,6 +48,7 @@ const DataTable = () => {
         } catch (err) {
             console.error('Error fetching records:', err);
             setError(err.message);
+            enqueueSnackbar('Failed to load records', { variant: 'error' });
             setLoading(false);
         }
     };

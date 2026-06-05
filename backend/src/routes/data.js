@@ -8,7 +8,11 @@ const { Op } = require('sequelize');
 const { requireAuth } = require('./auth');
 const { checkDeviceAccess, filterDevicesByPermission } = require('../middleware/permissions');
 const { getAvailableColumns, columnSets } = require('../utils/columnHelper');
-//const { Device, DeviceGroup } = require('../models');
+const { resolveAccessibleDeviceImeis, canAccessDeviceImei } = require('../utils/accessibleDevices');
+const { userHasMenuAccess } = require('../middleware/permissions');
+const logger = require('../utils/logger');
+
+const TRACKING_MAX_POINTS = Number.parseInt(process.env.TRACKING_MAX_POINTS, 10) || 15000;
 
 // Get device data (with permission check)
 router.get('/:deviceId', requireAuth, checkDeviceAccess, asyncHandler(async (req, res) => {
@@ -41,8 +45,14 @@ router.get('/:deviceId/tracking', requireAuth, checkDeviceAccess, asyncHandler(a
     const trackingData = await Record.findAll({
         where,
         attributes: availableColumns,
-        order: [['datetime', 'ASC']] // Order by device datetime instead of server timestamp
+        order: [['datetime', 'ASC']],
+        limit: TRACKING_MAX_POINTS
     });
+
+    if (trackingData.length === TRACKING_MAX_POINTS) {
+        res.setHeader('X-Tracking-Truncated', 'true');
+        res.setHeader('X-Tracking-Max-Points', String(TRACKING_MAX_POINTS));
+    }
     
     res.json(trackingData);
 }));
@@ -75,94 +85,32 @@ router.get('/:deviceId/export', requireAuth, checkDeviceAccess, asyncHandler(asy
     res.json(exportData);
 }));
 
-// Get tracking data for a device by IMEI (for Multi Tracking)
+// Get tracking data for a device by IMEI (for Tracking page)
 router.get('/imei/:deviceImei/tracking', requireAuth, asyncHandler(async (req, res) => {
     const { deviceImei } = req.params;
     const { startDate, endDate } = req.query;
-    
-    console.log('🚀 GET /api/data/imei/:deviceImei/tracking - Device:', deviceImei);
-    console.log('👤 User:', req.user.username, 'Role:', req.user.role);
-    
-    // Check if user has access to this device (read permission only)
-    if (req.user.role !== 'admin') {
-        console.log('🔍 Checking device access for non-admin user...');
-        
-        // Check if user has read permission for devices menu
-        const hasReadPermission = req.user.permissions?.menus?.devices?.read === true;
-        if (!hasReadPermission) {
-            console.log('❌ User does not have devices read permission');
-            return res.status(403).json({ error: 'Read permission required for device data' });
-        }
-        
-        // Check if user has access to this specific device
-        const { Device, UserDeviceAccess, UserDeviceGroupAccess, DeviceGroup } = require('../models');
-        
-        // Get device by IMEI
-        const device = await Device.findOne({ where: { imei: deviceImei } });
-        if (!device) {
-            console.log('❌ Device not found:', deviceImei);
-            return res.status(404).json({ error: 'Device not found' });
-        }
-        
-        // Check direct device access
-        const hasDirectAccess = req.user.permissions?.devices?.includes(deviceImei);
-        if (hasDirectAccess) {
-            console.log('✅ Direct device access confirmed');
-        } else {
-            // Check UserDeviceAccess table
-            const userDeviceAccess = await UserDeviceAccess.findOne({
-                where: { 
-                    userId: req.user.userId,
-                    deviceId: device.id,
-                    isActive: true
-                }
-            });
-            
-            if (userDeviceAccess) {
-                console.log('✅ UserDeviceAccess confirmed');
-            } else {
-                // Check UserDeviceGroupAccess table
-                const userGroupAccess = await UserDeviceGroupAccess.findAll({
-                    where: { 
-                        userId: req.user.userId,
-                        isActive: true
-                    },
-                    include: [{
-                        model: DeviceGroup,
-                        as: 'group',
-                        include: [{
-                            model: Device,
-                            as: 'devices',
-                            where: { id: device.id }
-                        }]
-                    }]
-                });
-                
-                if (userGroupAccess.length > 0) {
-                    console.log('✅ UserDeviceGroupAccess confirmed');
-                } else {
-                    console.log('❌ No access to device:', deviceImei);
-                    return res.status(403).json({ error: 'Access denied to this device' });
-                }
-            }
-        }
+
+    if (!userHasMenuAccess(req.user, 'tracking') && !userHasMenuAccess(req.user, 'devices')) {
+        return res.status(403).json({ error: 'Tracking permission required' });
     }
-    
+
+    const accessibleImeis = await resolveAccessibleDeviceImeis(req.user);
+    if (!canAccessDeviceImei(accessibleImeis, deviceImei)) {
+        return res.status(403).json({ error: 'Access denied to this device' });
+    }
+
     const where = {
-        deviceImei: deviceImei,
+        deviceImei,
         latitude: { [Op.ne]: null },
         longitude: { [Op.ne]: null }
     };
-    
+
     if (startDate && endDate) {
         where.datetime = {
             [Op.between]: [new Date(startDate), new Date(endDate)]
         };
     }
-    
-    console.log('📊 Fetching tracking data for device:', deviceImei);
-    console.log('📅 Date range:', startDate, 'to', endDate);
-    
+
     const trackingData = await Record.findAll({
         where,
         attributes: [
@@ -170,16 +118,28 @@ router.get('/imei/:deviceImei/tracking', requireAuth, asyncHandler(async (req, r
             'latitude',
             'longitude',
             'datetime',
+            'timestamp',
             'speed',
             'direction',
             'altitude',
             'satellites',
             'hdop'
         ],
-        order: [['datetime', 'ASC']]
+        order: [['datetime', 'ASC']],
+        limit: TRACKING_MAX_POINTS
     });
-    
-    console.log(`✅ Found ${trackingData.length} tracking points for device ${deviceImei}`);
+
+    if (trackingData.length === TRACKING_MAX_POINTS) {
+        res.setHeader('X-Tracking-Truncated', 'true');
+        res.setHeader('X-Tracking-Max-Points', String(TRACKING_MAX_POINTS));
+    }
+
+    logger.debug('Tracking data fetched', {
+        deviceImei,
+        points: trackingData.length,
+        truncated: trackingData.length === TRACKING_MAX_POINTS
+    });
+
     res.json(trackingData);
 }));
 

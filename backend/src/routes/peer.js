@@ -2,6 +2,11 @@ const express = require('express');
 const router = express.Router();
 const PeerToPeerSync = require('../services/peerToPeerSync');
 const logger = require('../utils/logger');
+const { requireAuth } = require('./auth');
+const { requireAdmin } = require('../middleware/permissions');
+
+router.use(requireAuth);
+router.use(requireAdmin);
 
 // Global peer sync instance
 let peerSync = null;
