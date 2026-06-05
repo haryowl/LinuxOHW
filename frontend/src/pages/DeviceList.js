@@ -33,6 +33,7 @@ import {
   Clear as ClearIcon
 } from '@mui/icons-material';
 import useWebSocket from '../hooks/useWebSocket';
+import { useWebSocketConnection } from '../contexts/WebSocketContext';
 import { apiFetchDevices, apiFetchDeviceGroups } from '../services/api';
 import DeviceEditDialog from '../components/DeviceEditDialog';
 
@@ -95,6 +96,7 @@ const DeviceList = () => {
     }
   }, []);
 
+  const { isConnected } = useWebSocketConnection();
   useWebSocket(null, handleWebSocketMessage);
 
   // Fetch devices and groups from API
@@ -342,7 +344,7 @@ const DeviceList = () => {
         </Alert>
       )}
 
-      {(!ws || ws.readyState !== WebSocket.OPEN) && (
+      {!isConnected && (
         <Alert severity="warning" sx={{ mb: 2 }}>
           WebSocket disconnected - real-time updates unavailable
         </Alert>
