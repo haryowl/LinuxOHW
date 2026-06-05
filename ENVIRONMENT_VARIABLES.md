@@ -27,9 +27,9 @@ These variables **MUST** be set in production. The application will fail to star
 | `NODE_ENV` | `development` | Environment mode: `development`, `production`, `test` |
 | `SERVER_IP` | `localhost` | Server IP address |
 | `SERVER_DOMAIN` | `localhost` | Server domain name |
-| `HTTP_PORT` | `3001` | HTTP server port |
+| `HTTP_PORT` | `8081` | HTTP server port |
 | `TCP_PORT` | `3003` | TCP server port for device connections |
-| `FRONTEND_PORT` | `3000` | Frontend application port |
+| `FRONTEND_PORT` | `8080` | Frontend application port |
 | `MOBILE_PORT` | `3002` | Mobile frontend port |
 
 ### Database Configuration
@@ -43,7 +43,7 @@ These variables **MUST** be set in production. The application will fail to star
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CORS_ORIGIN` | `http://localhost:3000,...` | Comma-separated list of allowed CORS origins |
+| `CORS_ORIGIN` | `http://localhost:8080,...` | Comma-separated list of allowed CORS origins |
 
 ### Performance Configuration
 
@@ -114,7 +114,7 @@ NODE_ENV=production
 JWT_SECRET=<generate-strong-secret>
 SESSION_SECRET=<generate-strong-secret>
 SERVER_IP=192.168.1.100
-HTTP_PORT=3001
+HTTP_PORT=8081
 TCP_PORT=3003
 ```
 

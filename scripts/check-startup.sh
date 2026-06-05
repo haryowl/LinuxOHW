@@ -59,11 +59,18 @@ fi
 echo ""
 
 echo "4. Checking ports..."
-if lsof -i :3001 &> /dev/null; then
-    echo "   ✗ Port 3001 is in use:"
-    lsof -i :3001
+if lsof -i :8081 &> /dev/null; then
+    echo "   ✗ Port 8081 is in use:"
+    lsof -i :8081
 else
-    echo "   ✓ Port 3001 is available"
+    echo "   ✓ Port 8081 is available"
+fi
+
+if lsof -i :8080 &> /dev/null; then
+    echo "   ✗ Port 8080 is in use:"
+    lsof -i :8080
+else
+    echo "   ✓ Port 8080 is available"
 fi
 
 if lsof -i :3003 &> /dev/null; then

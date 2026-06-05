@@ -68,7 +68,7 @@ const server = net.createServer((socket) => {
 });
 
 // Start server
-const PORT = 3001;
+const PORT = 8081;
 server.listen(PORT, () => {
     logger.info(`Test server listening on port ${PORT}`);
 

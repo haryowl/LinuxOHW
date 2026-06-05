@@ -85,7 +85,7 @@ pm2 status
 pm2 logs gali-parse
 
 # Health check
-curl http://localhost:3001/api/auth/check
+curl http://localhost:8081/api/auth/check
 ```
 
 ## Default Login

@@ -10,11 +10,12 @@ function getCorsOrigins() {
     }
     
     // Default origins for development and production
+    const { FRONTEND_PORT } = require('./ports');
     const defaultOrigins = [
-        'http://localhost:3000', 
-        'http://localhost:3002', 
+        `http://localhost:${FRONTEND_PORT}`,
+        'http://localhost:3002',
         'http://localhost:3004',
-        'http://127.0.0.1:3000',
+        `http://127.0.0.1:${FRONTEND_PORT}`,
         'http://127.0.0.1:3002',
         'http://127.0.0.1:3004'
     ];
@@ -23,7 +24,7 @@ function getCorsOrigins() {
     const serverIP = process.env.SERVER_IP;
     if (serverIP) {
         defaultOrigins.push(
-            `http://${serverIP}:3000`,
+            `http://${serverIP}:${FRONTEND_PORT}`,
             `http://${serverIP}:3002`,
             `http://${serverIP}:3004`
         );
@@ -36,7 +37,7 @@ const config = {
     env: process.env.NODE_ENV || 'development',
     
     http: {
-        port: parseInt(process.env.HTTP_PORT) || 3001,
+        port: require('./ports').HTTP_PORT,
         cors: {
             origin: getCorsOrigins(),
             credentials: true,

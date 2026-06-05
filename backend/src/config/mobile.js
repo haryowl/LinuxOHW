@@ -5,7 +5,7 @@ module.exports = {
   
   // Optimize for mobile hardware
   http: {
-    port: parseInt(process.env.PORT) || 3001,
+    port: parseInt(process.env.PORT, 10) || require('./ports').HTTP_PORT,
     cors: {
       origin: process.env.CORS_ORIGIN || '*'
     }

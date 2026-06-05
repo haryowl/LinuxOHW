@@ -56,9 +56,14 @@ echo ""
 
 # Check if ports are in use
 echo "4. Checking ports..."
-if lsof -i :3001 &> /dev/null; then
-    echo "   ⚠️  Port 3001 is in use. Kill process or change HTTP_PORT in env.production"
-    lsof -i :3001
+if lsof -i :8081 &> /dev/null; then
+    echo "   ⚠️  Port 8081 is in use. Kill process or change HTTP_PORT in env.production"
+    lsof -i :8081
+fi
+
+if lsof -i :8080 &> /dev/null; then
+    echo "   ⚠️  Port 8080 is in use. Kill process or change FRONTEND_PORT / serve port"
+    lsof -i :8080
 fi
 
 if lsof -i :3003 &> /dev/null; then

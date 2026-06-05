@@ -28,9 +28,9 @@ Your Gali-Parse working server has been updated to production-grade with full en
 ### **Environment-Based Configuration**
 ```bash
 # All ports are now configurable
-HTTP_PORT=3001
+HTTP_PORT=8081
 TCP_PORT=3003
-FRONTEND_PORT=3000
+FRONTEND_PORT=8080
 MOBILE_PORT=3002
 
 # Security settings
@@ -203,9 +203,9 @@ After deployment, your application will be available at:
 - `SERVER_DOMAIN`: Server domain name
 
 ### **Port Configuration**
-- `HTTP_PORT`: HTTP server port (default: 3001)
+- `HTTP_PORT`: HTTP server port (default: 8081)
 - `TCP_PORT`: TCP server port (default: 3003)
-- `FRONTEND_PORT`: Frontend port (default: 3000)
+- `FRONTEND_PORT`: Frontend port (default: 8080)
 - `MOBILE_PORT`: Mobile frontend port (default: 3002)
 
 ### **Security Configuration**
@@ -253,7 +253,7 @@ After deployment, your application will be available at:
 1. **Port Already in Use**
    ```bash
    # Check what's using the port
-   sudo netstat -tlnp | grep :3001
+   sudo netstat -tlnp | grep :8081
    
    # Kill the process
    sudo kill -9 <PID>
@@ -302,7 +302,7 @@ df -h
 free -h
 
 # Check network connections
-netstat -tlnp | grep -E "(3001|3003)"
+netstat -tlnp | grep -E "(8081|3003)"
 ```
 
 ## 🔄 **Updates and Maintenance**

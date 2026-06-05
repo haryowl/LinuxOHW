@@ -3,7 +3,7 @@
 module.exports = {
     env: 'production',
     http: {
-        port: parseInt(process.env.HTTP_PORT) || 3001,
+        port: require('./ports').HTTP_PORT,
         cors: {
             origin: process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',').map(o => o.trim()) : false,
             credentials: true

@@ -27,6 +27,10 @@ A production-ready GPS tracking parser for Galileosky devices with web dashboard
 
 ## 🛠️ Installation
 
+### Fresh Ubuntu server install
+
+See **[FRESH_INSTALL_UBUNTU.md](FRESH_INSTALL_UBUNTU.md)** for a complete guide (clone from [linuxParser2](https://github.com/haryowl/linuxParser2), ports **8080/8081**, PM2, Nginx).
+
 ### Quick Start
 
 ```bash
@@ -262,7 +266,7 @@ ISC License
 - Ensure data directory exists and is writable
 
 ### Port conflicts
-- Check if ports 3001, 3003 are available
+- Check if ports 8081, 3003 are available
 - Modify ports in `env.production`
 
 See [DEPLOYMENT_CHECKLIST.md](DEPLOYMENT_CHECKLIST.md) for troubleshooting guide.

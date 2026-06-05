@@ -48,11 +48,12 @@ module.exports = {
     // Environment variables
     env: {
       NODE_ENV: 'production',
-      HTTP_PORT: process.env.HTTP_PORT || 3001,
+      HTTP_PORT: process.env.HTTP_PORT || 8081,
+      FRONTEND_PORT: process.env.FRONTEND_PORT || 8080,
       TCP_PORT: process.env.TCP_PORT || 3003,
       SERVER_IP: process.env.SERVER_IP || 'localhost',
       SERVER_DOMAIN: process.env.SERVER_DOMAIN || 'localhost',
-      CORS_ORIGIN: process.env.CORS_ORIGIN || 'http://localhost:3000',
+      CORS_ORIGIN: process.env.CORS_ORIGIN || 'http://localhost:8080',
       // Secrets - MUST be provided, will fail if missing or using defaults
       JWT_SECRET: process.env.JWT_SECRET || (process.env.NODE_ENV === 'production' ? undefined : 'dev-secret-key'),
       SESSION_SECRET: process.env.SESSION_SECRET || (process.env.NODE_ENV === 'production' ? undefined : 'dev-session-secret'),

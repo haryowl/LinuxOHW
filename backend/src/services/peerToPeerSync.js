@@ -2,9 +2,10 @@ const fs = require('fs');
 const path = require('path');
 const http = require('http');
 const https = require('https');
+const { HTTP_PORT } = require('../config/ports');
 
 class PeerToPeerSync {
-    constructor(deviceId, port = 3001) {
+    constructor(deviceId, port = HTTP_PORT) {
         this.deviceId = deviceId;
         this.port = port;
         this.peerServer = null;

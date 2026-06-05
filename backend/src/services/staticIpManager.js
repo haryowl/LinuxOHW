@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { networkInterfaces } = require('os');
+const { HTTP_PORT, FRONTEND_PORT } = require('../config/ports');
 
 class StaticIpManager {
     constructor() {
@@ -59,10 +60,10 @@ class StaticIpManager {
     getServerUrls() {
         const ip = this.getPreferredIp();
         return {
-            http: `http://${ip}:3000`,
-            peerSync: `http://${ip}:3001`,
-            tcp: `${ip}:3003`,
-            peerSyncUI: `http://${ip}:3001/mobile-peer-sync-ui.html`
+            http: `http://${ip}:${FRONTEND_PORT}`,
+            peerSync: `http://${ip}:${HTTP_PORT}`,
+            tcp: `${ip}:${process.env.TCP_PORT || 3003}`,
+            peerSyncUI: `http://${ip}:${HTTP_PORT}/mobile-peer-sync-ui.html`
         };
     }
 
@@ -116,9 +117,9 @@ class StaticIpManager {
                 description: 'Static IP for Galileosky Parser Mobile Server'
             },
             server: {
-                http_port: 3000,
-                peer_sync_port: 3001,
-                tcp_port: 3003,
+                http_port: FRONTEND_PORT,
+                peer_sync_port: HTTP_PORT,
+                tcp_port: parseInt(process.env.TCP_PORT, 10) || 3003,
                 host: '0.0.0.0'
             },
             network: {

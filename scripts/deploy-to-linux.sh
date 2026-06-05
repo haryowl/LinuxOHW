@@ -4,7 +4,7 @@
 
 set -e
 
-APP_DIR="/opt/gali-parse"
+APP_DIR="/opt/linuxParser2"
 APP_USER="${SUDO_USER:-$USER}"
 
 echo "🚀 Gali-Parse Linux Deployment Script"
@@ -141,7 +141,8 @@ echo "4. Configure Nginx (if using): ./scripts/process-nginx-template.sh"
 echo ""
 echo "🌐 Access points:"
 echo "   - Web Dashboard: http://$(hostname -I | awk '{print $1}')"
-echo "   - Backend API: http://$(hostname -I | awk '{print $1}'):3001/api"
+echo "   - Backend API: http://$(hostname -I | awk '{print $1}'):8081/api"
+echo "   - Frontend UI: http://$(hostname -I | awk '{print $1}'):8080"
 echo "   - TCP Server: $(hostname -I | awk '{print $1}'):3003"
 
 

@@ -24,7 +24,7 @@ else
     echo "Creating template from nginx.conf..."
     
     # Create template by replacing values with variables
-    sed -e 's/${HTTP_PORT:-3001}/\${HTTP_PORT:-3001}/g' \
+    sed -e 's/${HTTP_PORT:-8081}/\${HTTP_PORT:-8081}/g' \
         -e 's/${SERVER_DOMAIN:-localhost}/\${SERVER_DOMAIN:-localhost}/g' \
         -e 's/${SERVER_IP:-127.0.0.1}/\${SERVER_IP:-127.0.0.1}/g' \
         -e 's/${FRONTEND_BUILD_PATH:-/opt/gali-parse/frontend/build}/\${FRONTEND_BUILD_PATH:-/opt/gali-parse/frontend/build}/g' \

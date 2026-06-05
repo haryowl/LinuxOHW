@@ -1,11 +1,12 @@
 // backend/config/development.js
+const { HTTP_PORT, FRONTEND_PORT } = require('./ports');
 
 module.exports = {
     env: 'development',
     http: {
-        port: parseInt(process.env.HTTP_PORT) || 3001,
+        port: HTTP_PORT,
         cors: {
-            origin: 'http://localhost:3000',
+            origin: `http://localhost:${FRONTEND_PORT}`,
             credentials: true
         }
     },

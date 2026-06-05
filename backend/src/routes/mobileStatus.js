@@ -6,6 +6,7 @@ const { promisify } = require('util');
 const logger = require('../utils/logger');
 
 const execAsync = promisify(exec);
+const { HTTP_PORT, FRONTEND_PORT } = require('../config/ports');
 
 // Get mobile device status
 router.get('/mobile/status', async (req, res) => {
@@ -175,18 +176,18 @@ async function getServicesStatus() {
     
     // Check if backend is running
     try {
-      const { stdout } = await execAsync('netstat -tlnp | grep :3001');
-      services.backend = { running: true, port: 3001 };
+      await execAsync(`netstat -tlnp | grep :${HTTP_PORT}`);
+      services.backend = { running: true, port: HTTP_PORT };
     } catch (error) {
-      services.backend = { running: false, port: 3001 };
+      services.backend = { running: false, port: HTTP_PORT };
     }
     
     // Check if frontend is running
     try {
-      const { stdout } = await execAsync('netstat -tlnp | grep :3002');
-      services.frontend = { running: true, port: 3002 };
+      await execAsync(`netstat -tlnp | grep :${FRONTEND_PORT}`);
+      services.frontend = { running: true, port: FRONTEND_PORT };
     } catch (error) {
-      services.frontend = { running: false, port: 3002 };
+      services.frontend = { running: false, port: FRONTEND_PORT };
     }
     
     // Check if TCP server is running

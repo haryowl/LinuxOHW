@@ -45,7 +45,8 @@
 - [ ] Recommended 5GB+ for logs and exports
 
 ### Network:
-- [ ] Port 3001 (HTTP) - Open
+- [ ] Port 8081 (HTTP) - Open
+- [ ] Port 8080 (Frontend, if served directly) - Open
 - [ ] Port 3003 (TCP) - Open for devices
 - [ ] Port 80 (HTTP) - Open if using Nginx
 - [ ] Port 443 (HTTPS) - Open if using SSL
@@ -164,16 +165,16 @@ cd /opt/gali-parse
 ./monitor.sh health
 
 # Port check
-netstat -tlnp | grep -E "(3001|3003)"
+netstat -tlnp | grep -E "(8081|8080|3003)"
 ```
 
 ### Test Endpoints:
 ```bash
 # Health check
-curl http://localhost:3001/api/auth/check
+curl http://localhost:8081/api/auth/check
 
 # Dashboard
-curl http://localhost:3001/api/dashboard/stats
+curl http://localhost:8081/api/dashboard/stats
 ```
 
 ### Check Logs:
@@ -204,7 +205,7 @@ node --version  # Should be >= 14.18.0
 pm2 logs gali-parse --err
 
 # Check if ports are in use
-netstat -tlnp | grep -E "(3001|3003)"
+netstat -tlnp | grep -E "(8081|8080|3003)"
 ```
 
 ### Issue: Database errors

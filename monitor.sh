@@ -60,7 +60,7 @@ show_status() {
     
     # Port Status
     echo -e "\n${GREEN}Port Status:${NC}"
-    local http_port=$(grep '^HTTP_PORT=' "$APP_DIR/env.production" 2>/dev/null | cut -d'=' -f2 || echo '3001')
+    local http_port=$(grep '^HTTP_PORT=' "$APP_DIR/env.production" 2>/dev/null | cut -d'=' -f2 || echo '8081')
     local tcp_port=$(grep '^TCP_PORT=' "$APP_DIR/env.production" 2>/dev/null | cut -d'=' -f2 || echo '3003')
     
     if netstat -tlnp | grep -q ":$http_port "; then
@@ -94,7 +94,7 @@ perform_health_check() {
     echo -e "${YELLOW}🏥 Health Check${NC}"
     echo -e "${BLUE}===============${NC}"
     
-    local http_port=$(grep '^HTTP_PORT=' "$APP_DIR/env.production" 2>/dev/null | cut -d'=' -f2 || echo '3001')
+    local http_port=$(grep '^HTTP_PORT=' "$APP_DIR/env.production" 2>/dev/null | cut -d'=' -f2 || echo '8081')
     local server_ip=$(hostname -I | awk '{print $1}')
     
     # Check HTTP endpoint
@@ -187,7 +187,7 @@ show_metrics() {
     
     # Network Connections
     echo -e "\n${GREEN}Network Connections:${NC}"
-    local http_port=$(grep '^HTTP_PORT=' "$APP_DIR/env.production" 2>/dev/null | cut -d'=' -f2 || echo '3001')
+    local http_port=$(grep '^HTTP_PORT=' "$APP_DIR/env.production" 2>/dev/null | cut -d'=' -f2 || echo '8081')
     local tcp_port=$(grep '^TCP_PORT=' "$APP_DIR/env.production" 2>/dev/null | cut -d'=' -f2 || echo '3003')
     
     local http_connections=$(netstat -an | grep ":$http_port " | wc -l)

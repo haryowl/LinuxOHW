@@ -53,6 +53,12 @@ import {
   Line
 } from 'recharts';
 import axios from 'axios';
+import { BASE_URL } from '../services/api';
+
+const api = axios.create({
+  baseURL: `${BASE_URL}/api`,
+  withCredentials: true
+});
 
 const Alerts = () => {
   const [alerts, setAlerts] = useState([]);
@@ -85,7 +91,7 @@ const Alerts = () => {
 
   const fetchAlerts = async () => {
     try {
-      const response = await axios.get('http://localhost:3000/api/alerts');
+      const response = await api.get('/alerts');
       setAlerts(response.data);
     } catch (error) {
       console.error('Error fetching alerts:', error);
@@ -94,7 +100,7 @@ const Alerts = () => {
 
   const fetchAlertHistory = async () => {
     try {
-      const response = await axios.get('http://localhost:3000/api/alerts/history');
+      const response = await api.get('/alerts/history');
       setAlertHistory(response.data);
     } catch (error) {
       console.error('Error fetching alert history:', error);
@@ -104,7 +110,7 @@ const Alerts = () => {
   const fetchChartData = async () => {
     setIsLoadingCharts(true);
     try {
-      const response = await axios.get('http://localhost:3000/api/alerts/stats');
+      const response = await api.get('/alerts/stats');
       setChartData(response.data);
     } catch (error) {
       console.error('Error fetching chart data:', error);
@@ -115,7 +121,7 @@ const Alerts = () => {
 
   const handleCreateAlert = async () => {
     try {
-      await axios.post('http://localhost:3000/api/alerts', newAlert);
+      await api.post('/alerts', newAlert);
       setOpen(false);
       setNewAlert({
         name: '',
@@ -132,7 +138,7 @@ const Alerts = () => {
 
   const handleDeleteAlert = async (alertId) => {
     try {
-      await axios.delete(`http://localhost:3000/api/alerts/${alertId}`);
+      await api.delete(`/alerts/${alertId}`);
       fetchAlerts();
     } catch (error) {
       console.error('Error deleting alert:', error);
@@ -141,7 +147,7 @@ const Alerts = () => {
 
   const handleToggleAlert = async (alertId, enabled) => {
     try {
-      await axios.patch(`http://localhost:3000/api/alerts/${alertId}`, { enabled });
+      await api.patch(`/alerts/${alertId}`, { enabled });
       fetchAlerts();
     } catch (error) {
       console.error('Error toggling alert:', error);
@@ -151,7 +157,7 @@ const Alerts = () => {
   const handleExportAlerts = async () => {
     setIsExporting(true);
     try {
-      const response = await axios.get('http://localhost:3000/api/alerts/export', {
+      const response = await api.get('/alerts/export', {
         responseType: 'blob'
       });
       

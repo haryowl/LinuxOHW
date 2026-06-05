@@ -4,6 +4,7 @@ const PeerToPeerSync = require('../services/peerToPeerSync');
 const logger = require('../utils/logger');
 const { requireAuth } = require('./auth');
 const { requireAdmin } = require('../middleware/permissions');
+const { HTTP_PORT } = require('../config/ports');
 
 router.use(requireAuth);
 router.use(requireAdmin);
@@ -15,7 +16,7 @@ let peerSync = null;
 function initializePeerSync(parsedData, devices, lastIMEI) {
     if (!peerSync) {
         const deviceId = `mobile-${Math.random().toString(36).substr(2, 9)}`;
-        peerSync = new PeerToPeerSync(deviceId, 3001);
+        peerSync = new PeerToPeerSync(deviceId, HTTP_PORT);
         logger.info('Peer sync initialized', { deviceId });
     }
     return peerSync;
@@ -33,7 +34,7 @@ router.get('/status', (req, res) => {
             return res.json({
                 deviceId: 'not-initialized',
                 isServerMode: false,
-                port: 3001,
+                port: HTTP_PORT,
                 lastSyncTime: null,
                 syncInProgress: false,
                 deviceIP: 'unknown',
@@ -189,7 +190,7 @@ router.post('/import', (req, res) => {
 router.get('/discovery', (req, res) => {
     try {
         const deviceIP = peerSync ? peerSync.getDeviceIP() : 'unknown';
-        const port = peerSync ? peerSync.port : 3001;
+        const port = peerSync ? peerSync.port : HTTP_PORT;
         const parsedData = global.parsedData || [];
         const devices = global.devices || new Map();
         
