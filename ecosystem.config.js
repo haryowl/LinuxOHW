@@ -41,8 +41,7 @@ module.exports = {
     min_uptime: process.env.PM2_MIN_UPTIME || '10s',
     max_restarts: process.env.PM2_MAX_RESTARTS || 10,
     restart_delay: process.env.PM2_RESTART_DELAY || 4000,
-    
-    // Environment variables
+
     env: {
       NODE_ENV: 'production',
       HTTP_PORT: process.env.HTTP_PORT || 8081,
@@ -51,7 +50,6 @@ module.exports = {
       SERVER_IP: process.env.SERVER_IP || 'localhost',
       SERVER_DOMAIN: process.env.SERVER_DOMAIN || 'localhost',
       CORS_ORIGIN: process.env.CORS_ORIGIN || 'http://localhost:8080',
-      // Secrets - MUST be provided, will fail if missing or using defaults
       JWT_SECRET: process.env.JWT_SECRET || (process.env.NODE_ENV === 'production' ? undefined : 'dev-secret-key'),
       SESSION_SECRET: process.env.SESSION_SECRET || (process.env.NODE_ENV === 'production' ? undefined : 'dev-session-secret'),
       LOG_LEVEL: process.env.LOG_LEVEL || 'info',
@@ -74,27 +72,21 @@ module.exports = {
       DATABASE_URL: process.env.DATABASE_URL || '',
       COOKIE_SECURE: process.env.COOKIE_SECURE || 'false'
     },
-    
-    // Logging configuration
+
     error_file: process.env.PM2_ERROR_FILE || 'logs/err.log',
     out_file: process.env.PM2_OUT_FILE || 'logs/out.log',
     log_file: process.env.PM2_LOG_FILE || 'logs/combined.log',
     time: true,
     log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
     merge_logs: true,
-    
-    // Advanced PM2 options
+
     kill_timeout: 5000,
     listen_timeout: 10000,
     wait_ready: false,
 
-    // Monitoring
     pmx: true,
-
-    // Source map support
     source_map_support: true,
 
-    // Node.js options
     node_args: [
       '--max-old-space-size=2048'
     ]
