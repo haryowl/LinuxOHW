@@ -8,6 +8,28 @@ Merge an **old database file on your Windows laptop** into the **live server** a
 | App folder | `/opt/LinuxParser2` (verify with `ls /opt/` — may be `linuxParser2`) |
 | Laptop file | `C:\Users\haryo\` (your old `prod.sqlite`) |
 | Strategy | **Merge** — keep new server users + live devices, add old history |
+| Old DB size | **~19 GB** — see [Large file notes](#large-file-19-gb) |
+
+---
+
+## Large file (19 GB)
+
+| Requirement | Detail |
+|-------------|--------|
+| **Copy method** | Old server → new server with `rsync` (not laptop) |
+| **Free disk** | 40–50 GB on `81.17.100.7` |
+| **Merge time** | Hours for `Records` (37+ devices) |
+| **Corruption** | Laptop/partial copies often fail — size must be **~19G** on server |
+
+```bash
+# Verify on new server
+ls -lh /opt/linuxParser2/backend/data/old-prod.sqlite
+# Expect: ~19G
+
+df -h /opt/linuxParser2/backend/data
+```
+
+If your file is much smaller than 19 GB, it is **incomplete** — re-copy from old server.
 
 ---
 
@@ -24,7 +46,7 @@ Merge an **old database file on your Windows laptop** into the **live server** a
 Get-Item C:\Users\haryo\prod.sqlite | Select-Object Name, Length, LastWriteTime
 ```
 
-Expect roughly **300–400 MB** if it is the full old database.
+Expect **~19 GB** for your full old database (not 300–400 MB). A smaller file on the laptop means the copy failed or was truncated.
 
 3. You need **SSH access** to `81.17.100.7` (user `root` or `haryow`).
 

@@ -10,7 +10,9 @@ Migrate from **old** `/opt/LinuxParser` to **new** `/opt/linuxParser2` while kee
 |--------|------|---------|
 | Old | `/opt/LinuxParser` | `5db5324` |
 | New | `/opt/linuxParser2` | `13cdce0+` |
-| Old DB size | ~344 MB | `backend/data/prod.sqlite` |
+| Old DB size | **~19 GB** (your case) | `backend/data/prod.sqlite` |
+
+> **Large database (10+ GB):** Do **not** copy via laptop if possible. Use **old server → new server** with `rsync`. Need **40+ GB** free disk on the new server. See [Large database (19 GB)](#large-database-19-gb) below.
 
 ---
 
@@ -172,6 +174,92 @@ Historical data from old server is already in the merged DB.
 | Missing old devices in UI | Check `SELECT COUNT(*) FROM Devices` |
 | Slow merge | Normal for 344MB+; Records insert may take several minutes |
 | `database is locked` | Ensure `pm2 stop gali-parse` |
+
+---
+
+## Large database (19 GB)
+
+Your old `prod.sqlite` is about **19 GB**. Plan accordingly:
+
+### Disk space on new server (`81.17.100.7`)
+
+| Item | Approx. size |
+|------|----------------|
+| `old-prod.sqlite` | 19 GB |
+| Current `prod.sqlite` | 1–5 GB+ (growing) |
+| Pre-merge backup | same as current `prod.sqlite` |
+| **Total needed** | **40–50 GB free** minimum |
+
+Check:
+
+```bash
+df -h /opt/linuxParser2/backend/data
+```
+
+### Copy method — **old server → new server** (recommended)
+
+Do **not** route 19 GB through a laptop unless you verify the file size matches exactly.
+
+**On OLD server:**
+
+```bash
+pm2 stop gali-parse
+sqlite3 /opt/LinuxParser/backend/data/prod.sqlite "PRAGMA wal_checkpoint(FULL);"
+ls -lh /opt/LinuxParser/backend/data/prod.sqlite
+```
+
+**On NEW server** (direct rsync, resumable):
+
+```bash
+pm2 stop gali-parse
+mkdir -p /opt/linuxParser2/backend/data
+
+rsync -avh --progress \
+  haryow@OLD_SERVER_IP:/opt/LinuxParser/backend/data/prod.sqlite \
+  /opt/linuxParser2/backend/data/old-prod.sqlite
+```
+
+Verify size matches old server (`ls -lh` on both).
+
+### Verify before merge
+
+```bash
+ls -lh /opt/linuxParser2/backend/data/old-prod.sqlite
+# Must be ~19G, not 344M or partial
+
+sqlite3 old-prod.sqlite "SELECT COUNT(*) FROM Devices;"
+sqlite3 old-prod.sqlite "SELECT COUNT(*) FROM Records;"
+```
+
+If `Records` fails with **malformed**, the copy is bad — re-run `rsync`.
+
+### Merge (hours for Records)
+
+```bash
+cd /opt/linuxParser2
+git pull
+cd backend
+node scripts/mergeSqliteDatabase.js ./data/old-prod.sqlite
+```
+
+Options for large DB:
+
+| Flag | When to use |
+|------|-------------|
+| `--skip-records` | Merge devices only (fast) |
+| `--no-backup` | Low disk space (risky — manual backup first) |
+| `--skip-integrity-check` | Skip slow `quick_check` on 19 GB file |
+
+Records merge runs **per IMEI** and may take **several hours**.
+
+### Laptop copy (only if unavoidable)
+
+```powershell
+# PowerShell — verify size after download (~19 GB = 20401094656 bytes)
+(Get-Item C:\Users\haryo\prod.sqlite).Length
+```
+
+If size is not ~19 GB, the file is truncated — **corruption is expected**.
 
 ---
 

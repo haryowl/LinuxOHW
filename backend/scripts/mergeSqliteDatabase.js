@@ -8,7 +8,26 @@
  *   cd /opt/linuxParser2/backend
  *   node scripts/mergeSqliteDatabase.js ./data/old-prod.sqlite
  *   node scripts/mergeSqliteDatabase.js ./data/old-prod.sqlite --skip-records
+ *   node scripts/mergeSqliteDatabase.js ./data/old-prod.sqlite --no-backup
  */
+
+function formatBytes(bytes) {
+  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
+  if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
+  return `${bytes} B`;
+}
+
+function getFreeDiskBytes(filePath) {
+  try {
+    const result = spawnSync('df', ['-B1', path.dirname(filePath)], { encoding: 'utf8' });
+    const line = (result.stdout || '').trim().split('\n')[1];
+    if (!line) return null;
+    const parts = line.split(/\s+/);
+    return Number.parseInt(parts[3], 10);
+  } catch {
+    return null;
+  }
+}
 
 const fs = require('fs');
 const path = require('path');
@@ -20,7 +39,12 @@ loadProductionEnv();
 
 const args = process.argv.slice(2);
 const skipRecords = args.includes('--skip-records');
+const skipBackup = args.includes('--no-backup');
+const skipIntegrityCheck = args.includes('--skip-integrity-check');
 const oldDbPath = path.resolve(args.find((a) => !a.startsWith('--')) || '');
+
+const LARGE_DB_BYTES = 1024 * 1024 * 1024; // 1 GB
+const HUGE_DB_BYTES = 10 * 1024 * 1024 * 1024; // 10 GB
 
 const MERGE_TABLES = [
   {
@@ -251,9 +275,11 @@ async function mergeRecordsBatched(db, stats, failed) {
   let inserted = 0;
   let skippedImeis = 0;
 
-  console.log(`  ${name}: merging per device (${imeis.length} IMEIs)...`);
+  console.log(`  ${name}: merging per device (${imeis.length} IMEIs, large DB — may take hours)...`);
 
-  for (const { imei } of imeis) {
+  const started = Date.now();
+  for (let i = 0; i < imeis.length; i += 1) {
+    const { imei } = imeis[i];
     const sql = `
       INSERT INTO main."${name}" (${colList})
       SELECT ${cols.map((c) => `o."${c}"`).join(', ')}
@@ -272,6 +298,10 @@ async function mergeRecordsBatched(db, stats, failed) {
       const result = await run(db, sql, [imei]);
       await run(db, 'COMMIT');
       inserted += result.changes || 0;
+      if ((i + 1) % 5 === 0 || i === imeis.length - 1) {
+        const elapsed = Math.round((Date.now() - started) / 1000);
+        console.log(`    progress ${i + 1}/${imeis.length} IMEIs, +${inserted} rows, ${elapsed}s`);
+      }
     } catch (error) {
       await run(db, 'ROLLBACK').catch(() => {});
       skippedImeis += 1;
@@ -300,31 +330,71 @@ function runIntegrityCheck(dbPath) {
   return { ok: firstLine === 'ok', output: out };
 }
 
+async function configureMergePragmas(db) {
+  await run(db, 'PRAGMA journal_mode = WAL');
+  await run(db, 'PRAGMA synchronous = NORMAL');
+  await run(db, 'PRAGMA busy_timeout = 120000');
+  await run(db, 'PRAGMA cache_size = -128000');
+}
+
 async function main() {
   if (!oldDbPath || !fs.existsSync(oldDbPath)) {
-    console.error('Usage: node scripts/mergeSqliteDatabase.js /path/to/old-prod.sqlite [--skip-records]');
+    console.error('Usage: node scripts/mergeSqliteDatabase.js /path/to/old-prod.sqlite [options]');
+    console.error('Options: --skip-records  --no-backup  --skip-integrity-check');
     process.exit(1);
   }
 
   const { buildSequelizeOptions } = require('../src/config/database');
   const newDbPath = buildSequelizeOptions().options.storage;
+  const oldSize = fs.statSync(oldDbPath).size;
+  const newSize = fs.existsSync(newDbPath) ? fs.statSync(newDbPath).size : 0;
 
   console.log('Merge SQLite databases');
-  console.log('  New (target):', newDbPath);
-  console.log('  Old (source):', oldDbPath);
+  console.log('  New (target):', newDbPath, `(${formatBytes(newSize)})`);
+  console.log('  Old (source):', oldDbPath, `(${formatBytes(oldSize)})`);
 
-  const oldCheck = runIntegrityCheck(oldDbPath);
-  if (!oldCheck.ok) {
-    console.log('\nWARNING: Old database integrity check failed:');
-    console.log(oldCheck.output.split('\n').slice(0, 5).join('\n'));
-    console.log('Will merge readable tables only. For full history, re-copy a clean prod.sqlite from old server.\n');
+  if (oldSize >= HUGE_DB_BYTES) {
+    console.log('\nNOTE: Old DB is very large (~10+ GB).');
+    console.log('  - Copy old server -> new server with rsync (not laptop) when possible');
+    console.log('  - Ensure 40+ GB free disk before merge');
+    console.log('  - Records merge can take several hours');
+    console.log('  - Laptop copies often corrupt/truncate — verify size matches old server exactly\n');
   }
 
-  const backupPath = `${newDbPath}.pre-merge-${Date.now()}`;
-  fs.copyFileSync(newDbPath, backupPath);
-  console.log('  Backup:', backupPath);
+  const freeBytes = getFreeDiskBytes(newDbPath);
+  const neededBytes = oldSize + newSize + (skipBackup ? 0 : newSize);
+  if (freeBytes !== null) {
+    console.log(`  Disk free: ${formatBytes(freeBytes)}, estimated need: ${formatBytes(neededBytes)}`);
+    if (freeBytes < neededBytes) {
+      console.error('\nERROR: Not enough disk space. Free space or use --no-backup (risky).');
+      process.exit(1);
+    }
+  }
+
+  if (!skipIntegrityCheck && oldSize < HUGE_DB_BYTES) {
+    console.log('\nRunning quick_check on old database...');
+    const oldCheck = runIntegrityCheck(oldDbPath);
+    if (!oldCheck.ok) {
+      console.log('WARNING: Old database integrity check failed:');
+      console.log(oldCheck.output.split('\n').slice(0, 5).join('\n'));
+      console.log('Will merge readable tables only. Re-copy from old server with WAL checkpoint.\n');
+    }
+  } else if (!skipIntegrityCheck) {
+    console.log('\nSkipping full quick_check on huge DB (slow). Verify with:');
+    console.log('  sqlite3 old-prod.sqlite "SELECT COUNT(*) FROM Devices; SELECT COUNT(*) FROM Records;"');
+  }
+
+  if (!skipBackup) {
+    const backupPath = `${newDbPath}.pre-merge-${Date.now()}`;
+    console.log(`\nBacking up target DB (${formatBytes(newSize)})...`);
+    fs.copyFileSync(newDbPath, backupPath);
+    console.log('  Backup:', backupPath);
+  } else {
+    console.log('\nWARNING: --no-backup set; target DB is not copied first.');
+  }
 
   const db = await openDb(newDbPath);
+  await configureMergePragmas(db);
   const attachPath = oldDbPath.replace(/'/g, "''");
   await run(db, `ATTACH DATABASE '${attachPath}' AS olddb`);
 
