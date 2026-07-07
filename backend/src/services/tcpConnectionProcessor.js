@@ -3,6 +3,34 @@ const logger = require('../utils/logger');
 
 const maxPacketSize = config.parser.maxPacketSize || 1024;
 
+const HTTP_PROBE_PATTERN = /^(GET |POST |PUT |HEAD |OPTIONS |DELETE |PATCH |CONNECT |HTTP\/)/;
+
+/**
+ * Internet scanners often hit the GPS TCP port with HTTP/TLS/SSH — not Galileosky devices.
+ */
+function isProbeTraffic(buffer) {
+    if (!buffer || buffer.length < 4) {
+        return false;
+    }
+
+    const preview = buffer.slice(0, Math.min(buffer.length, 24)).toString('ascii');
+    if (HTTP_PROBE_PATTERN.test(preview)) {
+        return true;
+    }
+    if (preview.startsWith('SSH-')) {
+        return true;
+    }
+    // TLS Client Hello
+    if (buffer[0] === 0x16 && buffer[1] === 0x03) {
+        return true;
+    }
+    return false;
+}
+
+function previewAscii(buffer, maxLen = 48) {
+    return buffer.slice(0, maxLen).toString('ascii').replace(/[^\x20-\x7E]/g, '.');
+}
+
 function buildConfirmation(packet, ackHeader = 0x02) {
     const packetChecksum = packet.readUInt16LE(packet.length - 2);
     return Buffer.from([ackHeader, packetChecksum & 0xff, (packetChecksum >> 8) & 0xff]);
@@ -23,6 +51,7 @@ function sendConfirmation(socket, packet, clientAddress, ackHeader = 0x02) {
 
 function extractPackets(state, incomingData) {
     const packets = [];
+    let rejectConnection = false;
 
     if (state.unsentData.length > 0) {
         state.buffer = Buffer.concat([state.unsentData, incomingData]);
@@ -33,6 +62,16 @@ function extractPackets(state, incomingData) {
         state.buffer = incomingData;
     }
 
+    if (isProbeTraffic(state.buffer)) {
+        logger.warn('Rejected non-Galileosky probe on GPS TCP port', {
+            preview: previewAscii(state.buffer),
+            bufferLength: state.buffer.length
+        });
+        state.buffer = Buffer.alloc(0);
+        state.unsentData = Buffer.alloc(0);
+        return { packets, rejectConnection: true };
+    }
+
     while (state.buffer.length >= 3) {
         const packetType = state.buffer.readUInt8(0);
         const rawLength = state.buffer.readUInt16LE(1);
@@ -40,6 +79,17 @@ function extractPackets(state, incomingData) {
         const totalLength = actualLength + 3;
 
         if (actualLength > maxPacketSize) {
+            if (isProbeTraffic(state.buffer)) {
+                logger.warn('Rejected non-Galileosky probe on GPS TCP port', {
+                    packetType: `0x${packetType.toString(16).padStart(2, '0')}`,
+                    preview: previewAscii(state.buffer),
+                    bufferLength: state.buffer.length
+                });
+                state.buffer = Buffer.alloc(0);
+                state.unsentData = Buffer.alloc(0);
+                return { packets, rejectConnection: true };
+            }
+
             logger.error('Packet exceeds MAX_PACKET_SIZE, discarding frame without ACK', {
                 packetType: `0x${packetType.toString(16).padStart(2, '0')}`,
                 actualLength,
@@ -81,7 +131,7 @@ function extractPackets(state, incomingData) {
         state.buffer = Buffer.alloc(0);
     }
 
-    return packets;
+    return { packets, rejectConnection };
 }
 
 async function processPacket(packet, socket, clientAddress, parser, connectionRegistry) {
@@ -137,13 +187,27 @@ function attachTcpDataHandler(socket, {
                     });
                 }
 
+                if (isProbeTraffic(data)) {
+                    logger.warn('Rejected non-Galileosky probe on GPS TCP port', {
+                        address: clientAddress,
+                        preview: previewAscii(data),
+                        length: data.length
+                    });
+                    socket.destroy();
+                    return;
+                }
+
                 logger.info('Raw TCP data received', {
                     address: clientAddress,
                     length: data.length,
                     hex: data.toString('hex').toUpperCase()
                 });
 
-                const packets = extractPackets(state, data);
+                const { packets, rejectConnection } = extractPackets(state, data);
+                if (rejectConnection) {
+                    socket.destroy();
+                    return;
+                }
 
                 for (const packet of packets) {
                     try {
@@ -175,5 +239,6 @@ module.exports = {
     attachTcpDataHandler,
     buildConfirmation,
     extractPackets,
-    processPacket
+    processPacket,
+    isProbeTraffic
 };
