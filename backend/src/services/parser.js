@@ -8,6 +8,8 @@ const config = require('../config');
 const PacketTypeHandler = require('./packetTypeHandler');
 const TagParser = require('./tagParser');
 const { isNewRecordStart } = require('./galileoskyRecordStream');
+const { GalileoskyBitBuffer, popcount } = require('./galileoskyBitBuffer');
+const { decryptPacketBody } = require('./galileoskyXtea');
 const { Record, Device } = require('../models');
 
 class GalileoskyParser extends EventEmitter {
@@ -17,6 +19,10 @@ class GalileoskyParser extends EventEmitter {
         this.connectionByIMEI = new Map(); // Store connection address per IMEI (for reverse lookup)
         this.maxPacketSize = config.parser.maxPacketSize;
         this.validateChecksum = config.parser.validateChecksum;
+        this.xteaKey = config.parser.xteaKey;
+        this.ackAfterSave = config.parser.ackAfterSave;
+        this.maxPendingTelemetryPerConnection = parseInt(process.env.MAX_PENDING_TELEMETRY, 10) || 200;
+        this.pendingTelemetryByConnection = new Map();
         
         // Batch processing configuration
         this.batchSize = 50; // Records per batch
@@ -53,73 +59,87 @@ class GalileoskyParser extends EventEmitter {
         }
 
         this.isProcessing = true;
+        const batch = this.recordBuffer.splice(0, this.batchSize);
         try {
-            const batch = this.recordBuffer.splice(0, this.batchSize);
             if (batch.length > 0) {
                 await this.batchSaveToDatabase(batch);
                 logger.debug(`Batch processed: ${batch.length} records`);
             }
         } catch (error) {
+            this.recordBuffer.unshift(...batch);
             logger.error('Error processing batch:', error);
+            throw error;
         } finally {
             this.isProcessing = false;
         }
     }
 
     async batchSaveToDatabase(records) {
-        try {
-            // Group records by IMEI for better performance
-            const recordsByImei = new Map();
-            for (const record of records) {
-                const imei = record.deviceImei;
-                if (!recordsByImei.has(imei)) {
-                    recordsByImei.set(imei, []);
-                }
-                recordsByImei.get(imei).push(record);
+        const recordsByImei = new Map();
+        for (const record of records) {
+            const imei = record.deviceImei;
+            if (!recordsByImei.has(imei)) {
+                recordsByImei.set(imei, []);
             }
+            recordsByImei.get(imei).push(record);
+        }
 
-            // Process each device's records in parallel
-            const devicePromises = Array.from(recordsByImei.entries()).map(async ([imei, deviceRecords]) => {
-                try {
-                    // Ensure device exists
-                    await this.ensureDeviceExists(imei);
-                    
-                    // Bulk insert records for this device
-                    await Record.bulkCreate(deviceRecords, {
-                        ignoreDuplicates: true,
-                        validate: false
-                    });
-                    
-                    logger.debug(`Bulk saved ${deviceRecords.length} records for device ${imei}`);
-                } catch (error) {
-                    logger.error(`Error bulk saving records for device ${imei}:`, error);
-                    // Fallback to individual saves
-                    for (const record of deviceRecords) {
-                        try {
-                            await Record.create(record);
-                        } catch (individualError) {
-                            logger.error(`Failed to save individual record for ${imei}:`, individualError);
-                        }
-                    }
-                }
-            });
+        let totalSaved = 0;
+        const failures = [];
 
-            await Promise.all(devicePromises);
-            logger.info(`Batch save completed: ${records.length} records processed`);
-            
-            // Invalidate dashboard stats cache when new records are added
+        for (const [imei, deviceRecords] of recordsByImei.entries()) {
+            const outcome = await this.saveDeviceRecords(imei, deviceRecords);
+            totalSaved += outcome.saved;
+            if (outcome.failed > 0) {
+                failures.push({ imei, failed: outcome.failed, total: deviceRecords.length });
+            }
+        }
+
+        if (failures.length > 0) {
+            const summary = failures.map((f) => `${f.imei}:${f.failed}/${f.total}`).join(', ');
+            throw new Error(`Database save incomplete (${summary})`);
+        }
+
+        if (totalSaved > 0) {
             try {
                 const cache = require('../utils/cache');
                 cache.delete('dashboard_stats');
                 cache.delete('total_records_count');
                 cache.delete('recent_records_count');
-                logger.debug('Dashboard stats cache invalidated after record insertion');
             } catch (cacheError) {
                 logger.warn('Failed to invalidate cache:', cacheError);
             }
+        }
+
+        logger.info(`Batch save completed: ${totalSaved} records saved`);
+    }
+
+    async saveDeviceRecords(imei, deviceRecords) {
+        await this.ensureDeviceExists(imei);
+
+        try {
+            await Record.bulkCreate(deviceRecords, {
+                ignoreDuplicates: true,
+                validate: false
+            });
+            logger.debug(`Bulk saved ${deviceRecords.length} records for device ${imei}`);
+            return { saved: deviceRecords.length, failed: 0 };
         } catch (error) {
-            logger.error('Error in batch save to database:', error);
-            throw error;
+            logger.error(`Error bulk saving records for device ${imei}:`, error);
+
+            let saved = 0;
+            let failed = 0;
+            for (const record of deviceRecords) {
+                try {
+                    await Record.create(record);
+                    saved += 1;
+                } catch (individualError) {
+                    failed += 1;
+                    logger.error(`Failed to save individual record for ${imei}:`, individualError);
+                }
+            }
+
+            return { saved, failed };
         }
     }
 
@@ -133,9 +153,120 @@ class GalileoskyParser extends EventEmitter {
     }
 
     async flushBuffer() {
-        if (this.recordBuffer.length > 0) {
+        while (this.recordBuffer.length > 0) {
             await this.processBatch();
         }
+    }
+
+    getPendingTelemetryCount(connectionAddress) {
+        return this.pendingTelemetryByConnection.get(connectionAddress)?.length || 0;
+    }
+
+    resolveImeiForRecord(record, connectionAddress) {
+        const tagImei = record?.tags?.['0x03']?.value;
+        if (typeof tagImei === 'string' && /^\d{15}$/.test(tagImei)) {
+            this.setIMEI(connectionAddress, tagImei);
+            return tagImei;
+        }
+        return this.getIMEI(connectionAddress);
+    }
+
+    queuePendingTelemetry(connectionAddress, record) {
+        if (!connectionAddress) {
+            throw new Error('Cannot queue telemetry without connection address');
+        }
+
+        const queue = this.pendingTelemetryByConnection.get(connectionAddress) || [];
+        if (queue.length >= this.maxPendingTelemetryPerConnection) {
+            throw new Error(
+                `Pending telemetry queue full for ${connectionAddress} (max ${this.maxPendingTelemetryPerConnection})`
+            );
+        }
+
+        queue.push(record);
+        this.pendingTelemetryByConnection.set(connectionAddress, queue);
+
+        logger.info('Telemetry queued pending IMEI', {
+            connectionAddress,
+            queuedCount: queue.length,
+            recordTags: Object.keys(record.tags),
+            timestamp: new Date().toISOString()
+        });
+    }
+
+    async flushPendingTelemetry(connectionAddress, imei, result = null) {
+        const queue = this.pendingTelemetryByConnection.get(connectionAddress);
+        if (!queue || queue.length === 0) {
+            return 0;
+        }
+
+        const pending = queue.splice(0, queue.length);
+        if (queue.length === 0) {
+            this.pendingTelemetryByConnection.delete(connectionAddress);
+        }
+
+        let flushed = 0;
+        for (const record of pending) {
+            await this.saveRecordToDatabase(record, imei);
+            flushed += 1;
+            if (result) {
+                result.records.push(record);
+                result.flushedPendingTelemetry = (result.flushedPendingTelemetry || 0) + 1;
+            }
+            this.emit('recordStored', {
+                imei,
+                timestamp: new Date(),
+                tags: record.tags,
+                recordNumber: record.tags['0x10']?.value,
+                fromPendingQueue: true
+            });
+        }
+
+        logger.info('Flushed pending telemetry after IMEI became available', {
+            connectionAddress,
+            imei,
+            flushed,
+            timestamp: new Date().toISOString()
+        });
+
+        return flushed;
+    }
+
+    async flushPendingTelemetryIfImeiKnown(connectionAddress, result = null) {
+        const imei = this.getIMEI(connectionAddress);
+        if (!imei) {
+            return 0;
+        }
+        return this.flushPendingTelemetry(connectionAddress, imei, result);
+    }
+
+    /**
+     * Ensure all telemetry from this packet is queued/saved before ACK.
+     */
+    async ensurePacketTelemetryPersisted(connectionAddress) {
+        const pending = this.getPendingTelemetryCount(connectionAddress);
+        if (pending > 0) {
+            throw new Error(
+                `Cannot ACK: ${pending} telemetry record(s) still waiting for IMEI on ${connectionAddress}`
+            );
+        }
+
+        if (this.ackAfterSave !== false) {
+            await this.flushBuffer();
+        }
+    }
+
+    clearConnectionState(connectionAddress) {
+        const pending = this.getPendingTelemetryCount(connectionAddress);
+        if (pending > 0) {
+            logger.warn('Discarding pending telemetry on disconnect', {
+                connectionAddress,
+                pending,
+                timestamp: new Date().toISOString()
+            });
+        }
+        this.pendingTelemetryByConnection.delete(connectionAddress);
+        this.clearIMEI(connectionAddress);
     }
 
     getCommandReply(record, connectionAddress) {
@@ -279,6 +410,7 @@ class GalileoskyParser extends EventEmitter {
         // Map packet types according to Galileosky protocol
         this.packetTypes = {
             0x01: this.parseMainPacket,    // Head Packet or Main Packet
+            0x08: this.parseCompressedPacket.bind(this),
             0x15: this.parseIgnorablePacket // Ignorable packet (just needs confirmation)
         };
     }
@@ -292,36 +424,48 @@ class GalileoskyParser extends EventEmitter {
                 throw new Error('Input must be a buffer');
             }
 
+            let workBuffer = buffer;
+            if (this.xteaKey) {
+                workBuffer = decryptPacketBody(buffer, this.xteaKey);
+            }
+
             // Log raw packet (hex in metadata — winston ignores extra string args)
             logger.info('Raw packet received', {
                 connectionAddress,
-                length: buffer.length,
-                hex: buffer.toString('hex').toUpperCase()
+                length: workBuffer.length,
+                encrypted: workBuffer !== buffer,
+                hex: workBuffer.toString('hex').toUpperCase()
             });
 
-            if (buffer.length < 3) { // Minimum packet size (header + length)
+            if (workBuffer.length < 3) { // Minimum packet size (header + length)
                 throw new Error('Packet too short');
             }
 
-            const header = buffer.readUInt8(0);
+            const header = workBuffer.readUInt8(0);
             
             // Validate packet structure and checksum
-            const { hasUnsentData, actualLength, rawLength } = this.validatePacket(buffer);
+            const { hasUnsentData, actualLength, rawLength } = this.validatePacket(workBuffer);
             
             // Use PacketTypeHandler to determine packet type
             if (PacketTypeHandler.isMainPacket(header)) {
                 // This is a Head Packet or Main Packet
-                const result = await this.parseMainPacket(buffer, 0, actualLength, connectionAddress);
+                const result = await this.parseMainPacket(workBuffer, 0, actualLength, connectionAddress);
+                result.hasUnsentData = hasUnsentData;
+                result.actualLength = actualLength;
+                result.rawLength = rawLength;
+                return result;
+            } else if (PacketTypeHandler.isCompressedPacket(header)) {
+                const result = await this.parseCompressedPacket(workBuffer, connectionAddress);
                 result.hasUnsentData = hasUnsentData;
                 result.actualLength = actualLength;
                 result.rawLength = rawLength;
                 return result;
             } else if (PacketTypeHandler.isIgnorablePacket(header)) {
                 // This is an ignorable packet, just needs confirmation
-                return await this.parseIgnorablePacket(buffer);
+                return await this.parseIgnorablePacket(workBuffer);
             } else if (PacketTypeHandler.isExtensionPacket(header)) {
                 // Extension packets carry the same tag stream as main packets (different HEAD byte)
-                const result = await this.parseMainPacket(buffer, 0, actualLength, connectionAddress);
+                const result = await this.parseMainPacket(workBuffer, 0, actualLength, connectionAddress);
                 result.packetType = 'extension';
                 result.extensionHeader = header;
                 result.hasUnsentData = hasUnsentData;
@@ -333,7 +477,7 @@ class GalileoskyParser extends EventEmitter {
                     header: `0x${header.toString(16).padStart(2, '0')}`,
                     actualLength
                 });
-                const result = await this.parseMainPacket(buffer, 0, actualLength, connectionAddress);
+                const result = await this.parseMainPacket(workBuffer, 0, actualLength, connectionAddress);
                 result.packetType = 'unknown';
                 result.unknownHeader = header;
                 return result;
@@ -469,7 +613,7 @@ class GalileoskyParser extends EventEmitter {
 
         result.records.push(record);
 
-        const imei = this.getIMEI(connectionAddress);
+        const imei = this.resolveImeiForRecord(record, connectionAddress);
         if (imei) {
             await this.saveRecordToDatabase(record, imei);
             this.emit('recordStored', {
@@ -478,12 +622,10 @@ class GalileoskyParser extends EventEmitter {
                 tags: record.tags,
                 recordNumber: record.tags['0x10']?.value
             });
+            await this.flushPendingTelemetry(connectionAddress, imei, result);
         } else {
-            logger.warn('No IMEI available for this connection, skipping record save', {
-                connectionAddress,
-                recordTags: Object.keys(record.tags),
-                timestamp: new Date().toISOString()
-            });
+            this.queuePendingTelemetry(connectionAddress, record);
+            result.queuedTelemetry = (result.queuedTelemetry || 0) + 1;
         }
     }
 
@@ -515,6 +657,8 @@ class GalileoskyParser extends EventEmitter {
                 await this.persistParsedRecord(record, connectionAddress, result);
             }
 
+            await this.flushPendingTelemetryIfImeiKnown(connectionAddress, result);
+
             return result;
         } catch (error) {
             logger.error('Error parsing main packet:', error);
@@ -523,96 +667,239 @@ class GalileoskyParser extends EventEmitter {
     }
 
     /**
-     * Parse compressed packet
+     * Parse compressed packet (HEAD 0x08) — bit-packed minimal data set + tag list.
      */
-    async parseCompressedPacket(buffer) {
-        const length = buffer.readUInt16LE(1);
+    async parseCompressedPacket(buffer, connectionAddress = null) {
+        const actualLength = buffer.readUInt16LE(1) & 0x7fff;
+        const dataEnd = 3 + actualLength;
         const result = {
             type: 'compressed',
-            length: length,
+            header: 0x08,
+            length: actualLength,
             records: [],
-            raw: buffer
+            commandReplies: 0
         };
 
-        let offset = 3; // Skip header and length
+        let offset = 3;
 
-        while (offset < length + 3) {
-            const record = await this.parseCompressedRecord(buffer, offset);
-            result.records.push(record);
+        while (offset + 10 < dataEnd) {
+            const record = await this.parseCompressedRecord(buffer, offset, dataEnd, connectionAddress);
+            if (Object.keys(record.tags).length > 0) {
+                await this.persistParsedRecord(record, connectionAddress, result);
+            }
             offset = record.nextOffset;
         }
 
-        // Verify checksum
-        const checksum = buffer.readUInt16LE(length + 1);
-        const calculatedChecksum = this.calculateCRC16(buffer.slice(0, length + 1));
-        result.checksumValid = checksum === calculatedChecksum;
+        logger.info('Compressed packet parsed', {
+            connectionAddress,
+            packetLength: actualLength,
+            recordsFound: result.records.length,
+            timestamp: new Date().toISOString()
+        });
+
+        await this.flushPendingTelemetryIfImeiKnown(connectionAddress, result);
 
         return result;
     }
 
     /**
-     * Parse compressed record
+     * Parse one compressed record inside a 0x08 packet.
      */
-    async parseCompressedRecord(buffer, offset) {
+    async parseCompressedRecord(buffer, offset, dataEnd, connectionAddress = null) {
         const record = {
-            minimalData: await this.parseMinimalDataSet(buffer.slice(offset, offset + 10)),
             tags: {},
-            nextOffset: offset + 10
+            nextOffset: offset
         };
 
-        // Parse tags list
-        const tagsCount = buffer.readUInt8(record.nextOffset);
-        record.nextOffset++;
-
-        if (tagsCount < 32) {
-            // Parse tag numbers
-            for (let i = 0; i < tagsCount; i++) {
-                const tag = buffer.readUInt8(record.nextOffset + i);
-                const tagHex = `0x${tag.toString(16).toUpperCase()}`;
-                const { value, newOffset } = this.parseTagValue(buffer, record.nextOffset + tagsCount, tagHex, buffer.length);
-                record.tags[tagHex] = {
-                    value: value,
-                    type: tagDefinitions[tagHex]?.type,
-                    description: tagDefinitions[tagHex]?.description
-                };
-                record.nextOffset = newOffset;
-            }
-        } else {
-            // Parse tag bitmask
-            const bitmask = buffer.readUInt32LE(record.nextOffset);
-            record.nextOffset += 4;
-            
-            for (let i = 0; i < 32; i++) {
-                if (bitmask & (1 << i)) {
-                    const tagHex = `0x${i.toString(16).padStart(2, '0')}`;
-                    const { value, newOffset } = this.parseTagValue(buffer, record.nextOffset, tagHex, buffer.length);
-                    record.tags[tagHex] = {
-                        value: value,
-                        type: tagDefinitions[tagHex]?.type,
-                        description: tagDefinitions[tagHex]?.description
-                    };
-                    record.nextOffset = newOffset;
-                }
-            }
+        if (offset + 10 > dataEnd) {
+            return record;
         }
 
+        const minimalData = this.parseMinimalDataSet(buffer.slice(offset, offset + 10));
+        offset += 10;
+        this.applyMinimalDataToRecord(record, minimalData);
+
+        if (offset >= dataEnd) {
+            record.nextOffset = offset;
+            return record;
+        }
+
+        const tagCountByte = buffer.readUInt8(offset);
+        offset += 1;
+        const tagCount = popcount(tagCountByte);
+
+        if (offset + tagCount > dataEnd) {
+            record.nextOffset = offset;
+            return record;
+        }
+
+        const tagIds = [];
+        for (let i = 0; i < tagCount; i++) {
+            tagIds.push(buffer.readUInt8(offset + i));
+        }
+        offset += tagCount;
+
+        for (const tag of tagIds) {
+            const tagHex = `0x${tag.toString(16).padStart(2, '0')}`.toLowerCase();
+
+            if (tag === 0xfe) {
+                const feResult = this.parseExtendedTagsBlock(buffer, offset, dataEnd, connectionAddress);
+                Object.assign(record.tags, feResult.tags);
+                offset = feResult.nextOffset;
+                continue;
+            }
+
+            const { value, newOffset, definition, stopRecord } = this.parseTagValue(
+                buffer,
+                offset,
+                tagHex,
+                dataEnd
+            );
+
+            if (stopRecord) {
+                break;
+            }
+
+            if (value !== null && definition) {
+                record.tags[tagHex] = {
+                    value,
+                    type: definition.type,
+                    description: definition.description
+                };
+
+                if (tagHex === '0x03' && typeof value === 'string' && /^\d{15}$/.test(value) && connectionAddress) {
+                    this.setIMEI(connectionAddress, value);
+                }
+            }
+
+            offset = newOffset;
+        }
+
+        record.nextOffset = offset;
         return record;
     }
 
+    applyMinimalDataToRecord(record, minimalData) {
+        if (minimalData.timestamp) {
+            record.tags['0x20'] = {
+                value: minimalData.timestamp,
+                type: 'datetime',
+                description: 'Date and time from compressed minimal data set'
+            };
+        }
+
+        record.tags['0x30'] = {
+            value: {
+                latitude: minimalData.latitude,
+                longitude: minimalData.longitude,
+                satellites: 0,
+                correctness: minimalData.valid ? 0 : 1
+            },
+            type: 'coordinates',
+            description: 'Coordinates from compressed minimal data set'
+        };
+
+        if (minimalData.alarm) {
+            record.tags['0x40'] = {
+                value: 1,
+                type: 'status',
+                description: 'Alarm flag from compressed minimal data set'
+            };
+        }
+
+        if (minimalData.userTag !== undefined) {
+            record.tags['0x4a'] = {
+                value: minimalData.userTag,
+                type: 'uint8',
+                description: 'User tag from compressed minimal data set'
+            };
+        }
+    }
+
     /**
-     * Parse minimal data set
+     * Parse compressed minimal data set (10 bytes, bit-packed per Galileosky spec).
      */
     parseMinimalDataSet(buffer) {
+        const bits = new GalileoskyBitBuffer(buffer);
+        bits.readUnsigned(1); // reserved
+
+        const calendar = new Date(Date.UTC(new Date().getUTCFullYear(), 0, 1, 0, 0, 0, 0));
+        calendar.setUTCSeconds(calendar.getUTCSeconds() + bits.readUnsigned(25));
+
+        const valid = bits.readUnsigned(1) === 0;
+        const longitude = (360 * bits.readUnsigned(22) / 4194304) - 180;
+        const latitude = (180 * bits.readUnsigned(21) / 2097152) - 90;
+        const alarm = bits.readUnsigned(1) > 0;
+        const userTag = bits.bitPos < 80 ? bits.readUnsigned(80 - bits.bitPos) : 0;
+
         return {
-            timestamp: this.parseTimestamp(buffer.readUInt32LE(0)),
-            coordinates: {
-                valid: !(buffer.readUInt8(4) & 0x01),
-                latitude: this.parseLatitude(buffer.readUInt32LE(4) & 0x1FFFFFFF),
-                longitude: this.parseLongitude(buffer.readUInt32LE(5) & 0x1FFFFFFF)
-            },
-            alarm: !!(buffer.readUInt8(8) & 0x01),
-            userTag: buffer.readUInt8(9)
+            timestamp: calendar,
+            valid,
+            latitude,
+            longitude,
+            alarm,
+            userTag
         };
+    }
+
+    parseExtendedTagsBlock(buffer, offset, endOffset, connectionAddress = null) {
+        const tags = {};
+        let recordOffset = offset;
+
+        if (!this.hasBytes(buffer, recordOffset, 2, endOffset)) {
+            return { tags, nextOffset: recordOffset };
+        }
+
+        const extendedBlockLength = buffer.readUInt16LE(recordOffset);
+        recordOffset += 2;
+        const extendedBlockEnd = recordOffset + extendedBlockLength;
+
+        if (extendedBlockEnd > endOffset) {
+            logger.warn('Extended tags block extends beyond record boundary', {
+                connectionAddress,
+                extendedBlockLength,
+                extendedBlockEnd,
+                endOffset
+            });
+            return { tags, nextOffset: endOffset };
+        }
+
+        while (recordOffset < extendedBlockEnd) {
+            if (recordOffset + 2 > extendedBlockEnd) {
+                break;
+            }
+
+            const extendedTag = buffer.readUInt16BE(recordOffset);
+            recordOffset += 2;
+            const tagHex = `0x${extendedTag.toString(16).padStart(4, '0')}`.toLowerCase();
+            const { value, newOffset, definition, stopRecord } = this.parseTagValue(
+                buffer,
+                recordOffset,
+                tagHex,
+                extendedBlockEnd
+            );
+
+            if (stopRecord) {
+                break;
+            }
+
+            if (value !== null && definition) {
+                tags[tagHex] = {
+                    value,
+                    type: definition.type,
+                    description: definition.description
+                };
+            } else {
+                logger.warn('Unknown extended tag encountered', {
+                    tagHex,
+                    connectionAddress
+                });
+            }
+
+            recordOffset = newOffset;
+        }
+
+        return { tags, nextOffset: extendedBlockEnd };
     }
 
     /**
@@ -721,6 +1008,8 @@ class GalileoskyParser extends EventEmitter {
                 return 9;
             case 'speedDirection':
                 return 4;
+            case 'bytes':
+                return definition.length || null;
             default:
                 return definition.length || null;
         }
@@ -876,6 +1165,14 @@ class GalileoskyParser extends EventEmitter {
                 newOffset = recordOffset + 4;
                 break;
             }
+            case 'bytes':
+                if (definition.length) {
+                    value = buffer.slice(recordOffset, recordOffset + definition.length).toString('hex').toUpperCase();
+                    newOffset = recordOffset + definition.length;
+                } else {
+                    return this.stopTagParse(recordOffset, tagHex, 'variable bytes tag needs explicit handler', endOffset);
+                }
+                break;
             default:
                 newOffset = recordOffset + (definition.length || 1);
                 value = null;
@@ -1473,85 +1770,11 @@ class GalileoskyParser extends EventEmitter {
             recordOffset++;
 
             if (tag === 0xFE) {
-                // Handle extended tags block
-                // Format: FE [length: 1 byte] [tag1: 2 bytes] [value1] [tag2: 2 bytes] [value2] ...
-                if (recordOffset < endOffset - 1) {
-                    // Read the length of the extended tags block (1 byte after FE)
-                    const extendedBlockLength = buffer.readUInt8(recordOffset);
-                    recordOffset += 1;
-                    
-                    const extendedBlockEnd = recordOffset + extendedBlockLength;
-                    
-                    if (extendedBlockEnd <= endOffset) {
-                        // Parse all extended tags in this block
-                        while (recordOffset < extendedBlockEnd) {
-                            // Read 2-byte extended tag ID
-                            if (recordOffset + 2 > extendedBlockEnd) {
-                                logger.warn('Incomplete extended tag ID encountered', {
-                                    connectionAddress,
-                                    recordOffset,
-                                    extendedBlockEnd,
-                                    timestamp: new Date().toISOString()
-                                });
-                                break;
-                            }
-                            
-                            const extendedTag = buffer.readUInt16BE(recordOffset);
-                            recordOffset += 2;
-                            const tagHex = `0x${extendedTag.toString(16).padStart(4, '0')}`.toLowerCase();
-                            const { value, newOffset, definition, stopRecord } = this.parseTagValue(
-                                buffer,
-                                recordOffset,
-                                tagHex,
-                                extendedBlockEnd
-                            );
-
-                            if (stopRecord) {
-                                break;
-                            }
-
-                            if (value !== null && definition) {
-                                record.tags[tagHex] = {
-                                    value,
-                                    type: definition.type,
-                                    description: definition.description
-                                };
-                                parsedTags.push(tagHex);
-                            } else {
-                                logger.warn('Unknown extended tag encountered', {
-                                    tagHex,
-                                    connectionAddress,
-                                    startOffset,
-                                    endOffset,
-                                    timestamp: new Date().toISOString()
-                                });
-                            }
-
-                            // Advance offset by the correct value length (from parseTagValue)
-                            recordOffset = newOffset;
-                        }
-                    } else {
-                        logger.warn('Extended tags block extends beyond record boundary', {
-                            connectionAddress,
-                            recordOffset,
-                            extendedBlockLength,
-                            extendedBlockEnd,
-                            endOffset,
-                            timestamp: new Date().toISOString()
-                        });
-                        break;
-                    }
-                } else {
-                    // Not enough bytes remaining for extended tag block
-                    logger.warn('Incomplete extended tag marker encountered', {
-                        connectionAddress,
-                        startOffset,
-                        endOffset,
-                        recordOffset,
-                        timestamp: new Date().toISOString()
-                    });
-                    break;
-                }
+                const feResult = this.parseExtendedTagsBlock(buffer, recordOffset, endOffset, connectionAddress);
+                Object.assign(record.tags, feResult.tags);
+                parsedTags.push(...Object.keys(feResult.tags));
+                recordOffset = feResult.nextOffset;
+                continue;
             } else {
                 // Handle regular 1-byte tags
                 const tagHex = `0x${tag.toString(16).padStart(2, '0')}`.toLowerCase();
@@ -1602,6 +1825,25 @@ class GalileoskyParser extends EventEmitter {
                         record.tags[tagHex] = {
                             value,
                             type: definition?.type || 'string',
+                            description: definition?.description
+                        };
+                        parsedTags.push(tagHex);
+                        recordOffset += 1 + available;
+                        continue;
+                    }
+                }
+
+                // Handle variable-length user data array (0xEA)
+                if (tagHex === '0xea') {
+                    const remainingLength = endOffset - recordOffset;
+                    if (remainingLength >= 1) {
+                        const dataLength = buffer.readUInt8(recordOffset);
+                        const available = Math.min(dataLength, remainingLength - 1);
+                        const dataSlice = buffer.slice(recordOffset + 1, recordOffset + 1 + available);
+                        const value = dataSlice.toString('hex').toUpperCase();
+                        record.tags[tagHex] = {
+                            value,
+                            type: definition?.type || 'bytes',
                             description: definition?.description
                         };
                         parsedTags.push(tagHex);

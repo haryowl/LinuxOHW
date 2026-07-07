@@ -24,6 +24,7 @@ const archiveStatScheduler = require('./services/archiveStatScheduler');
 const GalileoskyParser = require('./services/parser');
 const cache = require('./utils/cache');
 const net = require('net');
+const { attachTcpDataHandler } = require('./services/tcpConnectionProcessor');
 const { Device, Record, DeviceCommand } = require('./models');
 const { Op } = require('sequelize');
 
@@ -451,158 +452,19 @@ const tcpServer = net.createServer((socket) => {
         bufferStats: getBufferStats()
     });
 
-    // Clear IMEI for this specific connection
-    parser.clearIMEI(clientAddress);
-
-    let buffer = Buffer.alloc(0);
-    let unsentData = Buffer.alloc(0);
+    // Clear per-connection parser state for new TCP sessions
+    parser.clearConnectionState(clientAddress);
 
     // Set socket options to prevent hanging connections
     socket.setKeepAlive(true, 60000); // 60 seconds
     socket.setTimeout(30000); // 30 seconds timeout
 
-    socket.on('data', async (data) => {
-        try {
-            // Check if we're overloaded
-            if (isOverloaded) {
-                logger.warn('System overloaded, processing data immediately to prevent loss:', {
-                    address: socket.remoteAddress + ':' + socket.remotePort,
-                    bufferStats: getBufferStats()
-                });
-            }
-
-            // Log raw TCP chunk at info level (visible in pm2 logs)
-            logger.info('Raw TCP data received', {
-                address: socket.remoteAddress + ':' + socket.remotePort,
-                length: data.length,
-                hex: data.toString('hex').toUpperCase()
-            });
-
-            // Combine any unsent data with new data
-            if (unsentData.length > 0) {
-                buffer = Buffer.concat([unsentData, data]);
-                unsentData = Buffer.alloc(0);
-            } else if (buffer.length > 0) {
-                buffer = Buffer.concat([buffer, data]);
-            } else {
-                buffer = data;
-            }
-
-            // Process all complete packets in the buffer
-            const packets = [];
-            
-            while (buffer.length >= 3) {  // Minimum packet size (HEAD + LENGTH)
-                const packetType = buffer.readUInt8(0);
-                const rawLength = buffer.readUInt16LE(1);
-                // Only use the lower 15 bits for length
-                const actualLength = rawLength & 0x7FFF;  // Mask with 0x7FFF to get only lower 15 bits
-                const totalLength = actualLength + 3;  // HEAD + LENGTH + DATA + CRC
-
-                // Check if we have a complete packet
-                if (buffer.length < totalLength + 2) {  // +2 for CRC
-                    unsentData = Buffer.from(buffer);
-                    buffer = Buffer.alloc(0);
-                    break;
-                }
-
-                // Extract the complete packet
-                const packet = buffer.slice(0, totalLength + 2);
-                buffer = buffer.slice(totalLength + 2);
-
-                // Determine packet type
-                const isIgnorablePacket = packetType === 0x15;
-                const isExtensionPacket = packetType !== 0x01 && !isIgnorablePacket;
-
-                // Log packet details
-                logger.debug('Packet details:', {
-                    address: socket.remoteAddress + ':' + socket.remotePort,
-                    type: `0x${packetType.toString(16).padStart(2, '0')}`,
-                    packetType: isIgnorablePacket ? 'Ignored' : (isExtensionPacket ? 'Extension' : 'Main Packet'),
-                    length: actualLength,
-                    totalLength,
-                    bufferLength: buffer.length,
-                    hasUnsentData: buffer.length > 0,
-                    timestamp: new Date().toISOString()
-                });
-
-                // Handle different packet types
-                if (isIgnorablePacket) {
-                    logger.info('Ignoring packet type 0x15');
-                    // Send confirmation immediately for ignorable packets
-                    const packetChecksum = packet.readUInt16LE(packet.length - 2);
-                    const confirmation = Buffer.from([0x02, packetChecksum & 0xFF, (packetChecksum >> 8) & 0xFF]);
-                    socket.write(confirmation);
-                    logger.info('Confirmation sent for ignorable packet:', {
-                        address: socket.remoteAddress + ':' + socket.remotePort,
-                        hex: confirmation.toString('hex').toUpperCase(),
-                        checksum: `0x${confirmation.slice(1).toString('hex').toUpperCase()}`,
-                        timestamp: new Date().toISOString()
-                    });
-                    continue;
-                }
-
-                if (isExtensionPacket) {
-                    logger.debug('Extension packet queued for tag-stream parse', {
-                        header: `0x${packetType.toString(16).padStart(2, '0')}`
-                    });
-                }
-
-                packets.push(packet);
-            }
-
-            // Keep 1–2 byte remainder for next TCP chunk
-            if (buffer.length > 0 && buffer.length < 3) {
-                unsentData = Buffer.concat([unsentData, buffer]);
-                buffer = Buffer.alloc(0);
-            }
-
-            for (const packet of packets) {
-                try {
-                    // Send confirmation immediately (don't wait for processing)
-                    const packetChecksum = packet.readUInt16LE(packet.length - 2);
-                    const confirmation = Buffer.from([0x02, packetChecksum & 0xFF, (packetChecksum >> 8) & 0xFF]);
-                    socket.write(confirmation);
-                    
-                    logger.info('Confirmation sent:', {
-                        address: socket.remoteAddress + ':' + socket.remotePort,
-                        hex: confirmation.toString('hex').toUpperCase(),
-                        checksum: `0x${confirmation.slice(1).toString('hex').toUpperCase()}`,
-                        packetLength: packet.length - 5, // Subtract header, length, and CRC
-                        timestamp: new Date().toISOString()
-                    });
-
-                    // Parse packet using the parser directly (like original implementation)
-                    const parsedData = await parser.parse(packet, clientAddress);
-                    const imei = parser.getIMEI(clientAddress);
-                    if (imei) {
-                        connectionRegistry.bindImeiToConnection(imei, clientAddress);
-                    }
-                    
-                    logger.info('Packet parsed successfully:', {
-                        address: socket.remoteAddress + ':' + socket.remotePort,
-                        recordsCount: parsedData?.records?.length || 0,
-                        commandReplies: parsedData?.commandReplies || 0,
-                        timestamp: new Date().toISOString()
-                    });
-
-                } catch (error) {
-                    logger.error('Error processing packet:', {
-                        address: socket.remoteAddress + ':' + socket.remotePort,
-                        error: error.message,
-                        packetHex: packet.toString('hex').toUpperCase(),
-                        imei: parser.getIMEI(clientAddress) || null,
-                        timestamp: new Date().toISOString()
-                    });
-                }
-            }
-
-        } catch (error) {
-            logger.error('Error processing data:', {
-                address: socket.remoteAddress + ':' + socket.remotePort,
-                error: error.message,
-                timestamp: new Date().toISOString()
-            });
-        }
+    attachTcpDataHandler(socket, {
+        parser,
+        connectionRegistry,
+        clientAddress,
+        getBufferStats,
+        isOverloaded
     });
 
     socket.on('error', (error) => {
@@ -613,6 +475,7 @@ const tcpServer = net.createServer((socket) => {
         });
         // Force close the socket on error
         socket.destroy();
+        parser.clearConnectionState(clientAddress);
         connectionRegistry.removeConnection(clientAddress);
     });
 
@@ -637,11 +500,8 @@ const tcpServer = net.createServer((socket) => {
             timestamp: new Date().toISOString()
         });
         
-        // Clear buffer on disconnect
-        buffer = Buffer.alloc(0);
-        unsentData = Buffer.alloc(0);
-        // Clear IMEI for this specific connection
-        parser.clearIMEI(clientAddress);
+        // Clear per-connection parser state on disconnect
+        parser.clearConnectionState(clientAddress);
         connectionRegistry.removeConnection(clientAddress);
     });
 
@@ -651,6 +511,7 @@ const tcpServer = net.createServer((socket) => {
             timestamp: new Date().toISOString()
         });
         socket.destroy();
+        parser.clearConnectionState(clientAddress);
         connectionRegistry.removeConnection(clientAddress);
     });
 });

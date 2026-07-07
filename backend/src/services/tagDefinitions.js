@@ -370,6 +370,226 @@ const tagDefinitions = {
         length: 2,
         description: 'Input 15 Value'
     },
+    '0x5a': {
+        name: 'CAN 16-bit register 0',
+        type: 'uint16',
+        length: 2,
+        description: 'CAN 16-bit register 0'
+    },
+    '0x5b': {
+        name: 'CAN variable block',
+        type: 'bytes',
+        length: 7,
+        description: 'CAN variable-length block'
+    },
+    '0x5c': {
+        name: 'CAN 68-byte block',
+        type: 'bytes',
+        length: 68,
+        description: 'CAN 68-byte data block'
+    },
+    '0x5d': {
+        name: 'CAN 3-byte value',
+        type: 'bytes',
+        length: 3,
+        description: 'CAN 3-byte value'
+    },
+    '0x5e': {
+        name: 'CAN 3-byte value',
+        type: 'bytes',
+        length: 3,
+        description: 'CAN 3-byte value'
+    },
+    '0x5f': {
+        name: 'CAN 3-byte value',
+        type: 'bytes',
+        length: 3,
+        description: 'CAN 3-byte value'
+    },
+    '0x6f': {
+        name: 'CAN 3-byte value',
+        type: 'bytes',
+        length: 3,
+        description: 'CAN 3-byte value'
+    },
+    '0x80': {
+        name: 'CAN 3-byte value 0',
+        type: 'bytes',
+        length: 3,
+        description: 'CAN 3-byte value 0'
+    },
+    '0x81': {
+        name: 'CAN 3-byte value 1',
+        type: 'bytes',
+        length: 3,
+        description: 'CAN 3-byte value 1'
+    },
+    '0x82': {
+        name: 'CAN 3-byte value 2',
+        type: 'bytes',
+        length: 3,
+        description: 'CAN 3-byte value 2'
+    },
+    '0x83': {
+        name: 'CAN 3-byte value 3',
+        type: 'bytes',
+        length: 3,
+        description: 'CAN 3-byte value 3'
+    },
+    '0x84': {
+        name: 'CAN 3-byte value 4',
+        type: 'bytes',
+        length: 3,
+        description: 'CAN 3-byte value 4'
+    },
+    '0x85': {
+        name: 'CAN 3-byte value 5',
+        type: 'bytes',
+        length: 3,
+        description: 'CAN 3-byte value 5'
+    },
+    '0x86': {
+        name: 'CAN 3-byte value 6',
+        type: 'bytes',
+        length: 3,
+        description: 'CAN 3-byte value 6'
+    },
+    '0x87': {
+        name: 'CAN 3-byte value 7',
+        type: 'bytes',
+        length: 3,
+        description: 'CAN 3-byte value 7'
+    },
+    '0x88': {
+        name: 'CAN 8-bit register 16',
+        type: 'uint8',
+        length: 1,
+        description: 'CAN 8-bit register 16'
+    },
+    '0x89': {
+        name: 'CAN 8-bit register 17',
+        type: 'uint8',
+        length: 1,
+        description: 'CAN 8-bit register 17'
+    },
+    '0x8a': {
+        name: 'CAN 8-bit register 18',
+        type: 'uint8',
+        length: 1,
+        description: 'CAN 8-bit register 18'
+    },
+    '0x8b': {
+        name: 'CAN 8-bit register 19',
+        type: 'uint8',
+        length: 1,
+        description: 'CAN 8-bit register 19'
+    },
+    '0x8c': {
+        name: 'CAN 8-bit register 20',
+        type: 'uint8',
+        length: 1,
+        description: 'CAN 8-bit register 20'
+    },
+    '0x90': {
+        name: 'Driver unique ID',
+        type: 'uint32',
+        length: 4,
+        description: 'Driver unique identifier (iButton / RFID)'
+    },
+    '0xa0': { name: 'CAN 8-bit R15', type: 'uint8', length: 1, description: 'CAN 8-bit register 15' },
+    '0xa1': { name: 'CAN 8-bit R16', type: 'uint8', length: 1, description: 'CAN 8-bit register 16' },
+    '0xa2': { name: 'CAN 8-bit R17', type: 'uint8', length: 1, description: 'CAN 8-bit register 17' },
+    '0xa3': { name: 'CAN 8-bit R18', type: 'uint8', length: 1, description: 'CAN 8-bit register 18' },
+    '0xa4': { name: 'CAN 8-bit R19', type: 'uint8', length: 1, description: 'CAN 8-bit register 19' },
+    '0xa5': { name: 'CAN 8-bit R20', type: 'uint8', length: 1, description: 'CAN 8-bit register 20' },
+    '0xa6': { name: 'CAN 8-bit R21', type: 'uint8', length: 1, description: 'CAN 8-bit register 21' },
+    '0xa7': { name: 'CAN 8-bit R22', type: 'uint8', length: 1, description: 'CAN 8-bit register 22' },
+    '0xa8': { name: 'CAN 8-bit R23', type: 'uint8', length: 1, description: 'CAN 8-bit register 23' },
+    '0xa9': { name: 'CAN 8-bit R24', type: 'uint8', length: 1, description: 'CAN 8-bit register 24' },
+    '0xaa': { name: 'CAN 8-bit R25', type: 'uint8', length: 1, description: 'CAN 8-bit register 25' },
+    '0xab': { name: 'CAN 8-bit R26', type: 'uint8', length: 1, description: 'CAN 8-bit register 26' },
+    '0xac': { name: 'CAN 8-bit R27', type: 'uint8', length: 1, description: 'CAN 8-bit register 27' },
+    '0xad': { name: 'CAN 8-bit R28', type: 'uint8', length: 1, description: 'CAN 8-bit register 28' },
+    '0xae': { name: 'CAN 8-bit R29', type: 'uint8', length: 1, description: 'CAN 8-bit register 29' },
+    '0xaf': { name: 'CAN 8-bit R30', type: 'uint8', length: 1, description: 'CAN 8-bit register 30' },
+    '0xb0': { name: 'CAN 16-bit R5', type: 'uint16', length: 2, description: 'CAN 16-bit register 5' },
+    '0xb1': { name: 'CAN 16-bit R6', type: 'uint16', length: 2, description: 'CAN 16-bit register 6' },
+    '0xb2': { name: 'CAN 16-bit R7', type: 'uint16', length: 2, description: 'CAN 16-bit register 7' },
+    '0xb3': { name: 'CAN 16-bit R8', type: 'uint16', length: 2, description: 'CAN 16-bit register 8' },
+    '0xb4': { name: 'CAN 16-bit R9', type: 'uint16', length: 2, description: 'CAN 16-bit register 9' },
+    '0xb5': { name: 'CAN 16-bit R10', type: 'uint16', length: 2, description: 'CAN 16-bit register 10' },
+    '0xb6': { name: 'CAN 16-bit R11', type: 'uint16', length: 2, description: 'CAN 16-bit register 11' },
+    '0xb7': { name: 'CAN 16-bit R12', type: 'uint16', length: 2, description: 'CAN 16-bit register 12' },
+    '0xb8': { name: 'CAN 16-bit R13', type: 'uint16', length: 2, description: 'CAN 16-bit register 13' },
+    '0xb9': { name: 'CAN 16-bit R14', type: 'uint16', length: 2, description: 'CAN 16-bit register 14' },
+    '0xc0': {
+        name: 'Fuel total',
+        type: 'uint32',
+        length: 4,
+        description: 'Total fuel consumed (0.5 L units)'
+    },
+    '0xc1': {
+        name: 'Fuel level / temp / RPM',
+        type: 'bytes',
+        length: 4,
+        description: 'Fuel level, temperature, and RPM composite'
+    },
+    '0xc2': { name: 'CAN B0', type: 'uint32', length: 4, description: 'CAN 32-bit register B0' },
+    '0xc3': { name: 'CAN B1', type: 'uint32', length: 4, description: 'CAN 32-bit register B1' },
+    '0xc4': { name: 'CAN 8-bit R0', type: 'uint8', length: 1, description: 'CAN 8-bit register 0' },
+    '0xc5': { name: 'CAN 8-bit R1', type: 'uint8', length: 1, description: 'CAN 8-bit register 1' },
+    '0xc6': { name: 'CAN 8-bit R2', type: 'uint8', length: 1, description: 'CAN 8-bit register 2' },
+    '0xc7': { name: 'CAN 8-bit R3', type: 'uint8', length: 1, description: 'CAN 8-bit register 3' },
+    '0xc8': { name: 'CAN 8-bit R4', type: 'uint8', length: 1, description: 'CAN 8-bit register 4' },
+    '0xc9': { name: 'CAN 8-bit R5', type: 'uint8', length: 1, description: 'CAN 8-bit register 5' },
+    '0xca': { name: 'CAN 8-bit R6', type: 'uint8', length: 1, description: 'CAN 8-bit register 6' },
+    '0xcb': { name: 'CAN 8-bit R7', type: 'uint8', length: 1, description: 'CAN 8-bit register 7' },
+    '0xcc': { name: 'CAN 8-bit R8', type: 'uint8', length: 1, description: 'CAN 8-bit register 8' },
+    '0xcd': { name: 'CAN 8-bit R9', type: 'uint8', length: 1, description: 'CAN 8-bit register 9' },
+    '0xce': { name: 'CAN 8-bit R10', type: 'uint8', length: 1, description: 'CAN 8-bit register 10' },
+    '0xcf': { name: 'CAN 8-bit R11', type: 'uint8', length: 1, description: 'CAN 8-bit register 11' },
+    '0xd0': { name: 'CAN 8-bit R12', type: 'uint8', length: 1, description: 'CAN 8-bit register 12' },
+    '0xd1': { name: 'CAN 8-bit R13', type: 'uint8', length: 1, description: 'CAN 8-bit register 13' },
+    '0xd2': { name: 'CAN 8-bit R14', type: 'uint8', length: 1, description: 'CAN 8-bit register 14' },
+    '0xd5': { name: 'CAN 8-bit R15', type: 'uint8', length: 1, description: 'CAN 8-bit register 15' },
+    '0xd6': { name: 'CAN 16-bit R0', type: 'uint16', length: 2, description: 'CAN 16-bit register 0' },
+    '0xd7': { name: 'CAN 16-bit R1', type: 'uint16', length: 2, description: 'CAN 16-bit register 1' },
+    '0xd8': { name: 'CAN 16-bit R2', type: 'uint16', length: 2, description: 'CAN 16-bit register 2' },
+    '0xd9': { name: 'CAN 16-bit R3', type: 'uint16', length: 2, description: 'CAN 16-bit register 3' },
+    '0xda': { name: 'CAN 16-bit R4', type: 'uint16', length: 2, description: 'CAN 16-bit register 4' },
+    '0xdb': { name: 'CAN 32-bit R0', type: 'uint32', length: 4, description: 'CAN 32-bit register 0' },
+    '0xdc': { name: 'CAN 32-bit R1', type: 'uint32', length: 4, description: 'CAN 32-bit register 1' },
+    '0xdd': { name: 'CAN 32-bit R2', type: 'uint32', length: 4, description: 'CAN 32-bit register 2' },
+    '0xde': { name: 'CAN 32-bit R3', type: 'uint32', length: 4, description: 'CAN 32-bit register 3' },
+    '0xdf': { name: 'CAN 32-bit R4', type: 'uint32', length: 4, description: 'CAN 32-bit register 4' },
+    '0xea': {
+        name: 'User data array',
+        type: 'bytes',
+        length: null,
+        description: 'Variable-length user data array'
+    },
+    '0xfa': {
+        name: 'CAN 3-byte value',
+        type: 'bytes',
+        length: 3,
+        description: 'CAN 3-byte value'
+    },
+    '0xfd': {
+        name: 'CAN 8-byte block',
+        type: 'bytes',
+        length: 8,
+        description: 'CAN 8-byte data block'
+    },
+    '0xf0': { name: 'CAN 32-bit R5', type: 'uint32', length: 4, description: 'CAN 32-bit register 5' },
+    '0xf1': { name: 'CAN 32-bit R6', type: 'uint32', length: 4, description: 'CAN 32-bit register 6' },
+    '0xf2': { name: 'CAN 32-bit R7', type: 'uint32', length: 4, description: 'CAN 32-bit register 7' },
+    '0xf3': { name: 'CAN 32-bit R8', type: 'uint32', length: 4, description: 'CAN 32-bit register 8' },
+    '0xf4': { name: 'CAN 32-bit R9', type: 'uint32', length: 4, description: 'CAN 32-bit register 9' },
+    '0xf5': { name: 'CAN 32-bit R10', type: 'uint32', length: 4, description: 'CAN 32-bit register 10' },
+    '0xf6': { name: 'CAN 32-bit R11', type: 'uint32', length: 4, description: 'CAN 32-bit register 11' },
+    '0xf7': { name: 'CAN 32-bit R12', type: 'uint32', length: 4, description: 'CAN 32-bit register 12' },
+    '0xf8': { name: 'CAN 32-bit R13', type: 'uint32', length: 4, description: 'CAN 32-bit register 13' },
+    '0xf9': { name: 'CAN 32-bit R14', type: 'uint32', length: 4, description: 'CAN 32-bit register 14' },
     '0xe2': {
         name: 'User data 0',
         type: 'uint32',
