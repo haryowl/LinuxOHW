@@ -14,22 +14,22 @@ import ErrorBoundary from './components/ErrorBoundary';
 import ProtectedRoute from './components/ProtectedRoute';
 import Layout from './components/Layout';
 import Login from './pages/Login';
+import Dashboard from './pages/Dashboard';
+import DeviceList from './pages/DeviceList';
+import Mapping from './pages/Mapping';
+import Tracking from './pages/Tracking';
+import MultiTracking from './pages/MultiTracking';
+import Settings from './pages/Settings';
+import Alerts from './pages/Alerts';
+import DataTablePage from './pages/DataTable';
+import DeviceGroupManagement from './pages/DeviceGroupManagement';
 
-const Dashboard = lazy(() => import('./pages/Dashboard'));
-const DeviceList = lazy(() => import('./pages/DeviceList'));
 const DeviceDetail = lazy(() => import('./pages/DeviceDetail'));
-const Mapping = lazy(() => import('./pages/Mapping'));
-const Tracking = lazy(() => import('./pages/Tracking'));
-const Settings = lazy(() => import('./pages/Settings'));
-const Alerts = lazy(() => import('./pages/Alerts'));
-const DataTablePage = lazy(() => import('./pages/DataTable'));
 const DataExport = lazy(() => import('./pages/DataExport'));
 const DataSM = lazy(() => import('./pages/DataSM'));
 const OfflineGridDemo = lazy(() => import('./components/OfflineGridDemo'));
 const UserManagement = lazy(() => import('./pages/UserManagement'));
-const DeviceGroupManagement = lazy(() => import('./pages/DeviceGroupManagement'));
 const RoleManagement = lazy(() => import('./pages/RoleManagement'));
-const MultiTracking = lazy(() => import('./pages/MultiTracking'));
 const CommandCenter = lazy(() => import('./pages/CommandCenter'));
 const ArchiveStat = lazy(() => import('./pages/ArchiveStat'));
 
@@ -82,12 +82,12 @@ function AppContent() {
                   <Route path="/login" element={<Login />} />
                   <Route path="/" element={
                     <ProtectedRoute requiredPermission="dashboard">
-                      <Layout><LazyPage><Dashboard /></LazyPage></Layout>
+                      <Layout><Dashboard /></Layout>
                     </ProtectedRoute>
                   } />
                   <Route path="/devices" element={
                     <ProtectedRoute requiredPermission="devices">
-                      <Layout><LazyPage><DeviceList /></LazyPage></Layout>
+                      <Layout><DeviceList /></Layout>
                     </ProtectedRoute>
                   } />
                   <Route path="/devices/:id" element={
@@ -97,32 +97,32 @@ function AppContent() {
                   } />
                   <Route path="/mapping" element={
                     <ProtectedRoute requiredPermission="mapping">
-                      <Layout><LazyPage><Mapping /></LazyPage></Layout>
+                      <Layout><Mapping /></Layout>
                     </ProtectedRoute>
                   } />
                   <Route path="/tracking" element={
                     <ProtectedRoute requiredPermission="tracking">
-                      <Layout><LazyPage><Tracking /></LazyPage></Layout>
+                      <Layout><Tracking /></Layout>
                     </ProtectedRoute>
                   } />
                   <Route path="/multi-tracking" element={
                     <ProtectedRoute requiredPermission="tracking">
-                      <Layout><LazyPage><MultiTracking /></LazyPage></Layout>
+                      <Layout><MultiTracking /></Layout>
                     </ProtectedRoute>
                   } />
                   <Route path="/settings" element={
                     <ProtectedRoute requiredPermission="settings">
-                      <Layout><LazyPage><Settings /></LazyPage></Layout>
+                      <Layout><Settings /></Layout>
                     </ProtectedRoute>
                   } />
                   <Route path="/alerts" element={
                     <ProtectedRoute requiredPermission="alerts">
-                      <Layout><LazyPage><Alerts /></LazyPage></Layout>
+                      <Layout><Alerts /></Layout>
                     </ProtectedRoute>
                   } />
                   <Route path="/data" element={
                     <ProtectedRoute requiredPermission="data">
-                      <Layout><LazyPage><DataTablePage /></LazyPage></Layout>
+                      <Layout><DataTablePage /></Layout>
                     </ProtectedRoute>
                   } />
                   <Route path="/export" element={
@@ -152,7 +152,7 @@ function AppContent() {
                   } />
                   <Route path="/device-groups" element={
                     <ProtectedRoute requiredPermission="device-groups">
-                      <Layout><LazyPage><DeviceGroupManagement /></LazyPage></Layout>
+                      <Layout><DeviceGroupManagement /></Layout>
                     </ProtectedRoute>
                   } />
                   <Route path="/command-center" element={

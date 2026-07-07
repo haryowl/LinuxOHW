@@ -4,7 +4,7 @@ const crypto = require('crypto');
 const { User } = require('../models');
 const logger = require('../utils/logger');
 const sessionStore = require('../utils/sessionStore');
-const { getSessionCookieOptions } = require('../utils/cookieOptions');
+const { getSessionCookieOptions, getClearSessionCookieOptions } = require('../utils/cookieOptions');
 
 // Helper function to generate secure session token using crypto.randomBytes
 function generateToken() {
@@ -117,7 +117,7 @@ router.post('/login', loginRateLimit, async (req, res) => {
         
         // Clear any existing sessionToken cookie first
         const cookieOptions = getSessionCookieOptions();
-        res.clearCookie('sessionToken', cookieOptions);
+        res.clearCookie('sessionToken', getClearSessionCookieOptions());
         res.cookie('sessionToken', token, cookieOptions);
         
         // Return user data (without password)
@@ -160,7 +160,7 @@ router.post('/logout', async (req, res) => {
         }
         
         // Clear session cookie
-        res.clearCookie('sessionToken', getSessionCookieOptions());
+        res.clearCookie('sessionToken', getClearSessionCookieOptions());
         res.json({ message: 'Logged out successfully' });
         
     } catch (error) {

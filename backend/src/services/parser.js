@@ -138,6 +138,7 @@ class GalileoskyParser extends EventEmitter {
                 ignoreDuplicates: true,
                 validate: false
             });
+            await this.updateDeviceLastLocationFromRecords(imei, deviceRecords);
             logger.debug(`Bulk saved ${deviceRecords.length} records for device ${imei}`);
             return { saved: deviceRecords.length, failed: 0 };
         } catch (error) {
@@ -155,8 +156,36 @@ class GalileoskyParser extends EventEmitter {
                 }
             }
 
+            if (saved > 0) {
+                await this.updateDeviceLastLocationFromRecords(imei, deviceRecords);
+            }
+
             return { saved, failed };
         }
+    }
+
+    async updateDeviceLastLocationFromRecords(imei, deviceRecords) {
+        const gpsRecords = deviceRecords.filter((record) => {
+            const lat = Number(record.latitude);
+            const lon = Number(record.longitude);
+            return Number.isFinite(lat) && Number.isFinite(lon);
+        });
+
+        if (!gpsRecords.length) {
+            return;
+        }
+
+        const latest = gpsRecords[gpsRecords.length - 1];
+        await Device.update({
+            lastLatitude: latest.latitude,
+            lastLongitude: latest.longitude,
+            lastLocationAt: latest.datetime || latest.timestamp || new Date(),
+            lastSpeed: latest.speed ?? null,
+            lastDirection: latest.direction ?? null,
+            lastAltitude: latest.altitude ?? null,
+            lastSatellites: latest.satellites ?? null,
+            lastHdop: latest.hdop ?? null
+        }, { where: { imei } });
     }
 
     addRecordToBuffer(recordData) {

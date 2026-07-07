@@ -25,8 +25,8 @@ const GalileoskyParser = require('./services/parser');
 const cache = require('./utils/cache');
 const net = require('net');
 const { attachTcpDataHandler } = require('./services/tcpConnectionProcessor');
-const { Device, Record, DeviceCommand } = require('./models');
-const { Op } = require('sequelize');
+const { Device, Record, DeviceCommand, sequelize } = require('./models');
+const { Op, QueryTypes } = require('sequelize');
 
 const recordsRouter = require('./routes/records');
 const alertsRouter = require('./routes/alerts');
@@ -397,9 +397,15 @@ app.get('/api/dashboard/stats', requireAuth, async (req, res) => {
 
         if (accessibleImeis === null) {
             totalDevices = await Device.count();
-            totalRecords = await Record.count();
+            const [estimateRow] = await sequelize.query(
+                'SELECT MAX(id) AS total FROM "Records"',
+                { type: QueryTypes.SELECT }
+            );
+            totalRecords = Number(estimateRow?.total) || 0;
             recentRecords = await Record.count({
-                where: { datetime: { [Op.gte]: oneDayAgo } }
+                where: {
+                    timestamp: { [Op.gte]: oneDayAgo }
+                }
             });
         } else if (accessibleImeis.length > 0) {
             totalDevices = await Device.count({
@@ -411,7 +417,7 @@ app.get('/api/dashboard/stats', requireAuth, async (req, res) => {
             recentRecords = await Record.count({
                 where: {
                     deviceImei: { [Op.in]: accessibleImeis },
-                    datetime: { [Op.gte]: oneDayAgo }
+                    timestamp: { [Op.gte]: oneDayAgo }
                 }
             });
         }
@@ -423,7 +429,7 @@ app.get('/api/dashboard/stats', requireAuth, async (req, res) => {
             lastUpdate: now.toISOString()
         };
 
-        cache.set(cacheKey, stats, 60000);
+        cache.set(cacheKey, stats, 120000);
         logger.debug(`Dashboard stats completed in ${Date.now() - requestStart}ms`, {
             userId: user.userId,
             role: user.role

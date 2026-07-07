@@ -5,8 +5,8 @@ const deviceManager = require('../services/deviceManager');
 const asyncHandler = require('../utils/asyncHandler'); // Import the asyncHandler middleware
 const tagDefinitions = require('../services/tagDefinitions');
 const TagParser = require('../services/tagParser');
-const { Record, Device, DeviceGroup, UserDeviceAccess, UserDeviceGroupAccess, sequelize } = require('../models');
-const { Op, QueryTypes } = require('sequelize');
+const { Record, Device, DeviceGroup, UserDeviceAccess, UserDeviceGroupAccess } = require('../models');
+const { Op } = require('sequelize');
 const { requireAuth } = require('./auth');
 const { checkDeviceAccess, filterDevicesByPermission } = require('../middleware/permissions');
 const { findTrackingRecordsChronological } = require('../utils/recordTimeQuery');
@@ -55,7 +55,9 @@ function resolveLocationTimestamp(recordDatetime, recordTimestamp) {
 
 // Simple in-memory cache for devices (5 minutes TTL)
 const deviceCache = new Map();
+const locationsCache = new Map();
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+const LOCATIONS_CACHE_TTL = 30 * 1000; // 30 seconds
 
 function getCachedDevices(userId, role) {
     const cacheKey = `${userId}-${role}`;
@@ -87,32 +89,39 @@ function clearUserDeviceCache(userId) {
 
 function clearAllDeviceCache() {
     deviceCache.clear();
+    locationsCache.clear();
     console.log('🗑️ Cleared device cache for all users');
 }
 
-async function fetchLatestLocationsForImeis(deviceImeis) {
-    if (!deviceImeis.length) {
-        return [];
+function getCachedLocations(userId, role) {
+    const cacheKey = `${userId}-${role}`;
+    const cached = locationsCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < LOCATIONS_CACHE_TTL) {
+        return cached.data;
+    }
+    return null;
+}
+
+function setCachedLocations(userId, role, data) {
+    locationsCache.set(`${userId}-${role}`, { data, timestamp: Date.now() });
+}
+
+function buildLocationFromDevice(device) {
+    if (device.lastLatitude == null || device.lastLongitude == null) {
+        return null;
     }
 
-    const placeholders = deviceImeis.map(() => '?').join(', ');
-    return sequelize.query(
-        `SELECT r."deviceImei", r.latitude, r.longitude, r.datetime, r.timestamp,
-                r.speed, r.direction, r.altitude, r.satellites, r.hdop
-         FROM "Records" r
-         INNER JOIN (
-             SELECT "deviceImei", MAX(id) AS maxId
-             FROM "Records"
-             WHERE "deviceImei" IN (${placeholders})
-               AND latitude IS NOT NULL
-               AND longitude IS NOT NULL
-             GROUP BY "deviceImei"
-         ) latest ON r.id = latest.maxId`,
-        {
-            replacements: deviceImeis,
-            type: QueryTypes.SELECT
-        }
-    );
+    return {
+        latitude: device.lastLatitude,
+        longitude: device.lastLongitude,
+        timestamp: resolveLocationTimestamp(device.lastLocationAt, device.lastSeen),
+        lastRecordTime: device.lastLocationAt || device.lastSeen,
+        speed: device.lastSpeed,
+        direction: device.lastDirection,
+        altitude: device.lastAltitude,
+        satellites: device.lastSatellites,
+        hdop: device.lastHdop
+    };
 }
 
 // Get multi-device tracking data with color assignment and GPS filtering
@@ -473,8 +482,12 @@ router.get('/', requireAuth, filterDevicesByPermission, asyncHandler(async (req,
 // Get device locations with latest GPS data - WITH USER PERMISSIONS
 router.get('/locations', requireAuth, filterDevicesByPermission, asyncHandler(async (req, res) => {
     const requestStart = Date.now();
-    console.log('🚀 GET /api/devices/locations - Starting request for user:', req.user.username);
-    
+
+    const cached = getCachedLocations(req.user.userId, req.user.role);
+    if (cached) {
+        return res.json(cached);
+    }
+
     let devices;
     let accessibleDeviceImeis = [];
     
@@ -578,48 +591,36 @@ router.get('/locations', requireAuth, filterDevicesByPermission, asyncHandler(as
     const deviceImeis = devices.map(device => device.imei);
     
     if (deviceImeis.length === 0) {
-        console.log('ℹ️ No accessible devices found for locations');
         return res.json([]);
     }
-    
-    // Latest GPS per device (indexed MAX(id) — avoids 24h table scan)
-    const recentRecords = await fetchLatestLocationsForImeis(deviceImeis);
-    
-    // Create location map (take latest for each device)
-    const locationMap = new Map();
-    recentRecords.forEach(record => {
-        const normalized = normalizeCoordinates(record.latitude, record.longitude);
-        const resolvedTimestamp = resolveLocationTimestamp(record.datetime, record.timestamp);
-        const recordTime = record.datetime || record.timestamp;
-        const recordTimeMs = recordTime ? new Date(recordTime).getTime() : 0;
-        const existing = locationMap.get(record.deviceImei);
-        const existingTimeMs = existing?.lastRecordTime ? new Date(existing.lastRecordTime).getTime() : 0;
 
-        if (!existing || recordTimeMs > existingTimeMs) {
-            locationMap.set(record.deviceImei, {
-                latitude: normalized.latitude,
-                longitude: normalized.longitude,
-                timestamp: resolvedTimestamp,
-                lastRecordTime: recordTime,
-                speed: record.speed,
-                direction: record.direction,
-                altitude: record.altitude,
-                satellites: record.satellites,
-                hdop: record.hdop
-            });
+    const devicesWithLocations = devices.map((device) => {
+        const json = device.toJSON();
+        const location = buildLocationFromDevice(device);
+        if (!location) {
+            json.location = null;
+            return json;
         }
+
+        const normalized = normalizeCoordinates(location.latitude, location.longitude);
+        json.location = {
+            ...location,
+            latitude: normalized.latitude,
+            longitude: normalized.longitude
+        };
+        return json;
     });
-    
-    // Combine devices with their locations
-    const devicesWithLocations = devices.map(device => ({
-        ...device.toJSON(),
-        location: locationMap.get(device.imei) || null
-    }));
-    
+
+    setCachedLocations(req.user.userId, req.user.role, devicesWithLocations);
+
     const totalTime = Date.now() - requestStart;
-    console.log(`✅ Device locations completed in ${totalTime}ms - Found ${devicesWithLocations.length} devices with ${locationMap.size} locations`);
-    console.log(`🔍 Accessible devices: ${deviceImeis.join(', ')}`);
-    
+    const withGps = devicesWithLocations.filter((d) => d.location).length;
+    logger.info('Device locations completed', {
+        totalTime: `${totalTime}ms`,
+        devices: devicesWithLocations.length,
+        withGps
+    });
+
     res.json(devicesWithLocations);
 }));
 

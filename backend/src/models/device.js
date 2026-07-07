@@ -30,6 +30,38 @@ module.exports = (sequelize) => {
         lastSeen: {
             type: DataTypes.DATE
         },
+        lastLatitude: {
+            type: DataTypes.FLOAT,
+            allowNull: true
+        },
+        lastLongitude: {
+            type: DataTypes.FLOAT,
+            allowNull: true
+        },
+        lastLocationAt: {
+            type: DataTypes.DATE,
+            allowNull: true
+        },
+        lastSpeed: {
+            type: DataTypes.FLOAT,
+            allowNull: true
+        },
+        lastDirection: {
+            type: DataTypes.FLOAT,
+            allowNull: true
+        },
+        lastAltitude: {
+            type: DataTypes.FLOAT,
+            allowNull: true
+        },
+        lastSatellites: {
+            type: DataTypes.INTEGER,
+            allowNull: true
+        },
+        lastHdop: {
+            type: DataTypes.FLOAT,
+            allowNull: true
+        },
         groupId: {
             type: DataTypes.INTEGER,
             allowNull: true,

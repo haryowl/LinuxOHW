@@ -21,7 +21,14 @@ function getSessionCookieOptions() {
   };
 }
 
+/** Options for res.clearCookie — omit maxAge (deprecated in Express 5). */
+function getClearSessionCookieOptions() {
+  const { maxAge, ...options } = getSessionCookieOptions();
+  return options;
+}
+
 module.exports = {
   getSessionCookieOptions,
+  getClearSessionCookieOptions,
   useSecureCookies
 };

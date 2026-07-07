@@ -1,6 +1,6 @@
 // frontend/src/components/Layout.js
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import {
   AppBar,
@@ -66,6 +66,32 @@ const Layout = ({ children }) => {
 
   // Fix aria-hidden accessibility issue
   useAriaHiddenFix();
+
+  useEffect(() => {
+    const prefetch = () => {
+      import('../pages/DataExport');
+      import('../pages/DataSM');
+      import('../pages/UserManagement');
+      import('../pages/RoleManagement');
+      import('../pages/CommandCenter');
+      import('../pages/ArchiveStat');
+      import('../pages/DeviceDetail');
+    };
+    const schedule = window.requestIdleCallback || ((cb) => setTimeout(cb, 1500));
+    schedule(prefetch);
+  }, []);
+
+  const prefetchRoute = (path) => {
+    const loaders = {
+      '/export': () => import('../pages/DataExport'),
+      '/data-sm': () => import('../pages/DataSM'),
+      '/user-management': () => import('../pages/UserManagement'),
+      '/role-management': () => import('../pages/RoleManagement'),
+      '/command-center': () => import('../pages/CommandCenter'),
+      '/archive-stat': () => import('../pages/ArchiveStat')
+    };
+    loaders[path]?.();
+  };
 
   const handleDrawerToggle = () => {
     setMobileOpen(!mobileOpen);
@@ -304,6 +330,7 @@ const Layout = ({ children }) => {
               <ListItem key={item.text} disablePadding sx={{ mb: 0.5 }}>
                 <ListItemButton
                   selected={isSelected}
+                  onMouseEnter={() => prefetchRoute(item.path)}
                   onClick={() => {
                     navigate(item.path);
                     if (isMobile) {

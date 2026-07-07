@@ -78,7 +78,16 @@ DASHBOARD_RECORDS_RANGE=1h
 DASHBOARD_RECORDS_LIMIT=100
 ```
 
-4. Create DB indexes once (stop app first):
+4. **Backfill device map locations** (once, with app stopped — reads 41 rows from Devices, not 5M+ Records):
+
+```bash
+pm2 stop gali-parse
+cd /opt/linuxParser2/backend
+node scripts/backfillDeviceLocations.js
+pm2 start gali-parse
+```
+
+5. Create DB indexes once (stop app first):
 
 ```bash
 pm2 stop gali-parse
