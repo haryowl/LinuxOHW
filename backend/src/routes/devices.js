@@ -9,7 +9,7 @@ const { Record, Device, DeviceGroup, UserDeviceAccess, UserDeviceGroupAccess } =
 const { Op } = require('sequelize');
 const { requireAuth } = require('./auth');
 const { checkDeviceAccess, filterDevicesByPermission } = require('../middleware/permissions');
-const { appendTimeGteFilter, findTrackingRecordsChronological } = require('../utils/recordTimeQuery');
+const { appendTimeGteFilter, findTrackingRecordsChronological, effectiveTimeOrderDesc } = require('../utils/recordTimeQuery');
 const logger = require('../utils/logger');
 
 function normalizeCoordinateValue(value, maxAbs) {
@@ -592,7 +592,7 @@ router.get('/locations', requireAuth, filterDevicesByPermission, asyncHandler(as
             'satellites',
             'hdop'
         ],
-        order: [[require('sequelize').literal('COALESCE(datetime, timestamp)'), 'DESC']],
+        order: effectiveTimeOrderDesc(),
         limit: 500, // Reduced limit for speed
         raw: true
     });

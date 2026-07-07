@@ -13,8 +13,13 @@ const { appendTimeRangeFilter, effectiveTimeOrderDesc } = require('../utils/reco
 
 const EXPORT_MAX_ROWS = 50000;
 const PREVIEW_MAX_ROWS = 1000;
-const DEFAULT_RECORDS_RANGE = process.env.DASHBOARD_RECORDS_RANGE || '24h';
-const DEFAULT_RECORDS_LIMIT = Number.parseInt(process.env.DASHBOARD_RECORDS_LIMIT, 10) || 500;
+const DEFAULT_RECORDS_RANGE = process.env.DASHBOARD_RECORDS_RANGE || '1h';
+const DEFAULT_RECORDS_LIMIT = Number.parseInt(process.env.DASHBOARD_RECORDS_LIMIT, 10) || 100;
+
+const SUMMARY_RECORD_ATTRIBUTES = [
+    'id', 'deviceImei', 'timestamp', 'datetime', 'recordNumber',
+    'latitude', 'longitude', 'altitude', 'speed', 'direction', 'satellites', 'hdop', 'status'
+];
 
 function buildMergeKey(record) {
     const deviceImei = record.deviceImei || '';
@@ -138,7 +143,7 @@ router.get('/', requireAuth, filterDevicesByPermission, async (req, res) => {
         const requestStart = Date.now();
         logger.debug('GET /api/records - Starting request', { username: req.user.username });
         
-        let { startDate, endDate, limit = DEFAULT_RECORDS_LIMIT, range, imeis, offset: offsetParam, paginated } = req.query;
+        let { startDate, endDate, limit = DEFAULT_RECORDS_LIMIT, range, imeis, offset: offsetParam, paginated, lite } = req.query;
         const isPaginated = paginated === '1' || paginated === 'true';
         const queryOffset = Math.max(0, parseInt(offsetParam, 10) || 0);
         const where = {};
@@ -211,7 +216,8 @@ router.get('/', requireAuth, filterDevicesByPermission, async (req, res) => {
         logger.debug('Records query parameters', { range: range || 'custom', limit: queryLimit });
         const dbStart = Date.now();
         
-        const desiredAttributes = [
+        const useLitePayload = lite === '1' || lite === 'true';
+        const desiredAttributes = useLitePayload ? SUMMARY_RECORD_ATTRIBUTES : [
             'id', 'deviceImei', 'timestamp', 'datetime', 'recordNumber', 'milliseconds',
             'latitude', 'longitude', 'altitude', 'speed', 'course', 'satellites', 'hdop', 'direction',
             'status', 'supplyVoltage', 'batteryVoltage', 'temperature', 'acceleration',

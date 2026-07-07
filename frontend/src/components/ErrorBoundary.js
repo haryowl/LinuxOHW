@@ -11,6 +11,22 @@ class ErrorBoundary extends React.Component {
   }
 
   static getDerivedStateFromError(error) {
+    const message = error?.message || '';
+    const isChunkLoadError = error?.name === 'ChunkLoadError'
+      || /Loading chunk [\d]+ failed/.test(message);
+
+    if (isChunkLoadError) {
+      const reloadKey = 'chunk_reload_attempt';
+      const lastAttempt = Number(sessionStorage.getItem(reloadKey) || '0');
+      const now = Date.now();
+      // Auto-reload once after deploy when cached main.js points at removed chunks
+      if (now - lastAttempt > 5000) {
+        sessionStorage.setItem(reloadKey, String(now));
+        window.location.reload();
+        return { hasError: false, error: null };
+      }
+    }
+
     return { hasError: true, error };
   }
 
@@ -41,6 +57,12 @@ class ErrorBoundary extends React.Component {
             <Typography color="text.secondary" sx={{ mb: 3 }}>
               {this.state.error?.message || 'An unexpected error occurred'}
             </Typography>
+            {/Loading chunk [\d]+ failed/.test(this.state.error?.message || '') && (
+              <Typography color="text.secondary" sx={{ mb: 2, fontSize: '0.875rem' }}>
+                This usually happens right after an upgrade when the browser still has an old app bundle.
+                Reload once with Ctrl+F5, or ask an admin to run a fresh frontend build on the server.
+              </Typography>
+            )}
             <Button
               variant="contained"
               startIcon={<RefreshIcon />}

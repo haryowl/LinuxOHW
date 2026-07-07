@@ -99,7 +99,7 @@ export function DataProvider({ children }) {
 
   const fetchRecords = useCallback(async () => {
     try {
-      const response = await fetch(`${BASE_URL}/api/records?range=24h&limit=500`, {
+      const response = await fetch(`${BASE_URL}/api/records?range=1h&limit=100&lite=1`, {
         credentials: 'include'
       });
 
@@ -192,17 +192,24 @@ export function DataProvider({ children }) {
           setLoading(false);
         }
 
-        await Promise.all([
+        // Load lighter secondary data without blocking the shell
+        void Promise.all([
           fetchRecords(),
           fetchAlerts(),
           fetchStats()
-        ]);
+        ]).catch((err) => {
+          if (!cancelled) {
+            console.error('Secondary data load failed:', err);
+            setError('Failed to load some application data');
+          }
+        }).finally(() => {
+          if (!cancelled) {
+            setLoadingSecondary(false);
+          }
+        });
       } catch (err) {
         if (!cancelled) {
           setError('Failed to load application data');
-        }
-      } finally {
-        if (!cancelled) {
           setLoading(false);
           setLoadingSecondary(false);
         }

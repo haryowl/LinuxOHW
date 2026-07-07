@@ -202,7 +202,17 @@ app.use('/api/device-commands', deviceCommandsRouter);
 // Serve static files if frontend build exists (moved to end to not interfere with API routes)
 const frontendBuildPath = path.join(__dirname, '..', '..', 'frontend', 'build');
 if (fs.existsSync(frontendBuildPath)) {
-    app.use(express.static(frontendBuildPath));
+    app.use(express.static(frontendBuildPath, {
+        maxAge: '1y',
+        immutable: true,
+        setHeaders(res, filePath) {
+            if (filePath.endsWith(`${path.sep}index.html`) || filePath.endsWith('/index.html')) {
+                res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+                res.setHeader('Pragma', 'no-cache');
+                res.setHeader('Expires', '0');
+            }
+        }
+    }));
 }
 
 // Initialize WebSocket
@@ -616,6 +626,9 @@ app.get('*', (req, res, next) => {
     const indexPath = path.join(frontendBuildPath, 'index.html');
 
     if (fs.existsSync(indexPath)) {
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
         res.sendFile(indexPath);
     } else {
         next(); // Let notFoundHandler handle it
