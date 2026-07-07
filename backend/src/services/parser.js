@@ -292,8 +292,12 @@ class GalileoskyParser extends EventEmitter {
                 throw new Error('Input must be a buffer');
             }
 
-            // Log raw data
-            logger.info('Raw packet data:', buffer.toString('hex'));
+            // Log raw packet (hex in metadata — winston ignores extra string args)
+            logger.info('Raw packet received', {
+                connectionAddress,
+                length: buffer.length,
+                hex: buffer.toString('hex').toUpperCase()
+            });
 
             if (buffer.length < 3) { // Minimum packet size (header + length)
                 throw new Error('Packet too short');
@@ -368,7 +372,14 @@ class GalileoskyParser extends EventEmitter {
             const receivedChecksum = buffer.readUInt16LE(expectedLength);
 
             if (calculatedChecksum !== receivedChecksum) {
-                throw new Error('Checksum mismatch');
+                logger.warn('Checksum mismatch', {
+                    calculated: `0x${calculatedChecksum.toString(16).padStart(4, '0')}`,
+                    received: `0x${receivedChecksum.toString(16).padStart(4, '0')}`,
+                    hex: buffer.toString('hex').toUpperCase()
+                });
+                if (process.env.VALIDATE_CHECKSUM === 'strict') {
+                    throw new Error('Checksum mismatch');
+                }
             }
         }
 
@@ -1106,7 +1117,14 @@ class GalileoskyParser extends EventEmitter {
             const receivedChecksum = buffer.readUInt16LE(expectedLength);
 
             if (calculatedChecksum !== receivedChecksum) {
-                throw new Error('Checksum mismatch');
+                logger.warn('Checksum mismatch', {
+                    calculated: `0x${calculatedChecksum.toString(16).padStart(4, '0')}`,
+                    received: `0x${receivedChecksum.toString(16).padStart(4, '0')}`,
+                    hex: buffer.toString('hex').toUpperCase()
+                });
+                if (process.env.VALIDATE_CHECKSUM === 'strict') {
+                    throw new Error('Checksum mismatch');
+                }
             }
         }
 

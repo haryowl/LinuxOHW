@@ -471,19 +471,19 @@ const tcpServer = net.createServer((socket) => {
                 });
             }
 
-            // Log raw data received
-            logger.debug('Raw data received:', {
+            // Log raw TCP chunk at info level (visible in pm2 logs)
+            logger.info('Raw TCP data received', {
                 address: socket.remoteAddress + ':' + socket.remotePort,
-                bufferLength: data.length,
-                hex: data.toString('hex').toUpperCase(),
                 length: data.length,
-                timestamp: new Date().toISOString()
+                hex: data.toString('hex').toUpperCase()
             });
 
             // Combine any unsent data with new data
             if (unsentData.length > 0) {
                 buffer = Buffer.concat([unsentData, data]);
                 unsentData = Buffer.alloc(0);
+            } else if (buffer.length > 0) {
+                buffer = Buffer.concat([buffer, data]);
             } else {
                 buffer = data;
             }
@@ -501,6 +501,7 @@ const tcpServer = net.createServer((socket) => {
                 // Check if we have a complete packet
                 if (buffer.length < totalLength + 2) {  // +2 for CRC
                     unsentData = Buffer.from(buffer);
+                    buffer = Buffer.alloc(0);
                     break;
                 }
 
@@ -549,6 +550,12 @@ const tcpServer = net.createServer((socket) => {
                 packets.push(packet);
             }
 
+            // Keep 1–2 byte remainder for next TCP chunk
+            if (buffer.length > 0 && buffer.length < 3) {
+                unsentData = Buffer.concat([unsentData, buffer]);
+                buffer = Buffer.alloc(0);
+            }
+
             for (const packet of packets) {
                 try {
                     // Send confirmation immediately (don't wait for processing)
@@ -582,6 +589,8 @@ const tcpServer = net.createServer((socket) => {
                     logger.error('Error processing packet:', {
                         address: socket.remoteAddress + ':' + socket.remotePort,
                         error: error.message,
+                        packetHex: packet.toString('hex').toUpperCase(),
+                        imei: parser.getIMEI(clientAddress) || null,
                         timestamp: new Date().toISOString()
                     });
                 }
