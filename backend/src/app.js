@@ -574,6 +574,7 @@ const tcpServer = net.createServer((socket) => {
                     logger.info('Packet parsed successfully:', {
                         address: socket.remoteAddress + ':' + socket.remotePort,
                         recordsCount: parsedData?.records?.length || 0,
+                        commandReplies: parsedData?.commandReplies || 0,
                         timestamp: new Date().toISOString()
                     });
 

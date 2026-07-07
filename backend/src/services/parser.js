@@ -408,7 +408,20 @@ class GalileoskyParser extends EventEmitter {
 
         while (offset < endOffset && guard++ < maxIterations) {
             const before = offset;
-            const record = this.parseRecord(buffer, offset, endOffset, connectionAddress);
+            let record;
+            try {
+                record = this.parseRecord(buffer, offset, endOffset, connectionAddress);
+            } catch (error) {
+                logger.warn('Record parse failed, advancing offset', {
+                    connectionAddress,
+                    offset,
+                    endOffset,
+                    error: error.message
+                });
+                offset = before + 1;
+                continue;
+            }
+
             const nextOffset = Number.isInteger(record.nextOffset) ? record.nextOffset : endOffset;
 
             if (Object.keys(record.tags).length > 0) {
@@ -435,6 +448,11 @@ class GalileoskyParser extends EventEmitter {
             if (reply) {
                 this.emit('commandReply', reply);
             }
+            result.commandReplies = (result.commandReplies || 0) + 1;
+            logger.debug('Command reply packet handled (not stored as telemetry record)', {
+                connectionAddress,
+                commandNumber: record.tags['0xe0']?.value
+            });
             return;
         }
 
@@ -467,7 +485,8 @@ class GalileoskyParser extends EventEmitter {
                 header: buffer.readUInt8(offset),
                 length: actualLength,
                 rawLength: actualLength,
-                records: []
+                records: [],
+                commandReplies: 0
             };
 
             const dataStart = offset + 3;
@@ -539,7 +558,7 @@ class GalileoskyParser extends EventEmitter {
             for (let i = 0; i < tagsCount; i++) {
                 const tag = buffer.readUInt8(record.nextOffset + i);
                 const tagHex = `0x${tag.toString(16).toUpperCase()}`;
-                const { value, newOffset } = this.parseTagValue(buffer, record.nextOffset + tagsCount, tagHex);
+                const { value, newOffset } = this.parseTagValue(buffer, record.nextOffset + tagsCount, tagHex, buffer.length);
                 record.tags[tagHex] = {
                     value: value,
                     type: tagDefinitions[tagHex]?.type,
@@ -555,7 +574,7 @@ class GalileoskyParser extends EventEmitter {
             for (let i = 0; i < 32; i++) {
                 if (bitmask & (1 << i)) {
                     const tagHex = `0x${i.toString(16).padStart(2, '0')}`;
-                    const { value, newOffset } = this.parseTagValue(buffer, record.nextOffset, tagHex);
+                    const { value, newOffset } = this.parseTagValue(buffer, record.nextOffset, tagHex, buffer.length);
                     record.tags[tagHex] = {
                         value: value,
                         type: tagDefinitions[tagHex]?.type,
@@ -669,26 +688,73 @@ class GalileoskyParser extends EventEmitter {
         }, offset + 1 + length];
     }
 
+    getTagValueByteLength(definition, tagHex) {
+        switch (definition.type) {
+            case 'uint8':
+            case 'int8':
+                return 1;
+            case 'uint16':
+            case 'int16':
+            case 'status':
+            case 'outputs':
+            case 'inputs':
+                return 2;
+            case 'uint32':
+            case 'int32':
+            case 'uint32_modbus':
+            case 'datetime':
+                return 4;
+            case 'string':
+                return definition.length || null;
+            case 'coordinates':
+                return 9;
+            case 'speedDirection':
+                return 4;
+            default:
+                return definition.length || null;
+        }
+    }
+
+    stopTagParse(recordOffset, tagHex, reason, endOffset) {
+        logger.warn(`Stopping record at tag ${tagHex}: ${reason}`, {
+            tagHex,
+            recordOffset,
+            endOffset
+        });
+        return {
+            value: null,
+            newOffset: recordOffset,
+            definition: null,
+            stopRecord: true
+        };
+    }
+
+    hasBytes(buffer, offset, size, endOffset) {
+        return offset >= 0 && size >= 0 && offset + size <= endOffset;
+    }
+
     // Synchronous tag value parser
-    parseTagValue(buffer, recordOffset, tagHex) {
+    parseTagValue(buffer, recordOffset, tagHex, endOffset = buffer.length) {
         const definition = this.tagDefinitionsCache.get(String(tagHex).toLowerCase());
         if (!definition) {
-            logger.warn(`Unknown tag ${tagHex} at offset ${recordOffset}, ending record`, {
+            return this.stopTagParse(recordOffset, tagHex, 'unknown tag', endOffset);
+        }
+
+        const byteLength = this.getTagValueByteLength(definition, tagHex);
+        if (byteLength !== null && !this.hasBytes(buffer, recordOffset, byteLength, endOffset)) {
+            return this.stopTagParse(
+                recordOffset,
                 tagHex,
-                recordOffset
-            });
-            return {
-                value: null,
-                newOffset: recordOffset,
-                definition: null,
-                stopRecord: true
-            };
+                `need ${byteLength} bytes, have ${endOffset - recordOffset}`,
+                endOffset
+            );
         }
 
         let value;
         let newOffset = recordOffset;
 
-        switch (definition.type) {
+        try {
+            switch (definition.type) {
             case 'uint8':
                 value = buffer.readUInt8(recordOffset);
                 newOffset = recordOffset + 1;
@@ -701,9 +767,7 @@ class GalileoskyParser extends EventEmitter {
                 value = buffer.readUInt32LE(recordOffset);
                 newOffset = recordOffset + 4;
                 break;
-            case 'uint32_modbus':
-                // Modbus uses word-swapped byte order: bytes are reordered as low word, high word
-                // Example: 00 A8 AC 00 -> 00 00 AC A8 -> value 44200 / 100 = 442
+            case 'uint32_modbus': {
                 const modbusBytes = [
                     buffer.readUInt8(recordOffset),
                     buffer.readUInt8(recordOffset + 3),
@@ -713,6 +777,7 @@ class GalileoskyParser extends EventEmitter {
                 value = Buffer.from(modbusBytes).readUInt32BE(0) / 100;
                 newOffset = recordOffset + 4;
                 break;
+            }
             case 'int8':
                 value = buffer.readInt8(recordOffset);
                 newOffset = recordOffset + 1;
@@ -726,27 +791,19 @@ class GalileoskyParser extends EventEmitter {
                 newOffset = recordOffset + 4;
                 break;
             case 'string':
-                try {
-                    // For IMEI (tag 0x03), use ASCII encoding and validate
-                    if (tagHex === '0x03') {
-                        value = buffer.toString('ascii', recordOffset, recordOffset + definition.length);
-                        // Validate IMEI format (should be 15 digits)
-                        if (value && /^\d{15}$/.test(value.trim())) {
-                            value = value.trim();
-                        } else {
-                            logger.warn(`Invalid IMEI format: ${value}`, {
-                                hex: buffer.slice(recordOffset, recordOffset + definition.length).toString('hex'),
-                                tagHex,
-                                timestamp: new Date().toISOString()
-                            });
-                            value = null;
-                        }
+                if (tagHex === '0x03') {
+                    value = buffer.toString('ascii', recordOffset, recordOffset + definition.length);
+                    if (value && /^\d{15}$/.test(value.trim())) {
+                        value = value.trim();
                     } else {
-                        value = buffer.toString('utf8', recordOffset, recordOffset + definition.length);
+                        logger.warn(`Invalid IMEI format: ${value}`, {
+                            hex: buffer.slice(recordOffset, recordOffset + definition.length).toString('hex'),
+                            tagHex
+                        });
+                        value = null;
                     }
-                } catch (error) {
-                    logger.error(`Error parsing string tag ${tagHex}:`, error.message);
-                    value = null;
+                } else {
+                    value = buffer.toString('utf8', recordOffset, recordOffset + definition.length);
                 }
                 newOffset = recordOffset + definition.length;
                 break;
@@ -811,6 +868,13 @@ class GalileoskyParser extends EventEmitter {
             default:
                 newOffset = recordOffset + (definition.length || 1);
                 value = null;
+            }
+        } catch (error) {
+            return this.stopTagParse(recordOffset, tagHex, error.message, endOffset);
+        }
+
+        if (newOffset > endOffset) {
+            return this.stopTagParse(recordOffset, tagHex, 'parser advanced past record end', endOffset);
         }
 
         return {
@@ -1417,7 +1481,16 @@ class GalileoskyParser extends EventEmitter {
                             const extendedTag = buffer.readUInt16BE(recordOffset);
                             recordOffset += 2;
                             const tagHex = `0x${extendedTag.toString(16).padStart(4, '0')}`.toLowerCase();
-                            const { value, newOffset, definition } = this.parseTagValue(buffer, recordOffset, tagHex);
+                            const { value, newOffset, definition, stopRecord } = this.parseTagValue(
+                                buffer,
+                                recordOffset,
+                                tagHex,
+                                extendedBlockEnd
+                            );
+
+                            if (stopRecord) {
+                                break;
+                            }
 
                             if (value !== null && definition) {
                                 record.tags[tagHex] = {
@@ -1538,7 +1611,12 @@ class GalileoskyParser extends EventEmitter {
                     }
                 }
 
-                const { value, newOffset, definition: tagDef, stopRecord } = this.parseTagValue(buffer, recordOffset, tagHex);
+                const { value, newOffset, definition: tagDef, stopRecord } = this.parseTagValue(
+                    buffer,
+                    recordOffset,
+                    tagHex,
+                    endOffset
+                );
 
                 if (stopRecord) {
                     record.nextOffset = recordOffset - 1;
