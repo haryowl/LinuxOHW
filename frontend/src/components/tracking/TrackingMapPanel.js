@@ -36,7 +36,7 @@ const TrackingMapPanel = ({
         {trackCoordinates.length > 1 && (
           <>
             <Polyline positions={trackCoordinates} color="blue" weight={3} opacity={0.7} />
-            <TrackFlowArrows points={mapTrackPoints} />
+            <TrackFlowArrows points={mapTrackPoints} totalPoints={trackingData.length} />
           </>
         )}
 
