@@ -18,6 +18,11 @@ code {
   width: 100%;
 }
 
+.track-flow-arrow-icon {
+  background: transparent !important;
+  border: none !important;
+}
+
 /* Offline grid layer styles */
 .offline-grid-layer {
   pointer-events: none;

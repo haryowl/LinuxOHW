@@ -13,7 +13,7 @@ const { userHasMenuAccess } = require('../middleware/permissions');
 const { appendTimeRangeFilter, effectiveTimeOrderAsc, findTrackingRecordsChronological } = require('../utils/recordTimeQuery');
 const logger = require('../utils/logger');
 
-const TRACKING_MAX_POINTS = Number.parseInt(process.env.TRACKING_MAX_POINTS, 10) || 15000;
+const TRACKING_MAX_POINTS = Number.parseInt(process.env.TRACKING_MAX_POINTS, 10) || 30000;
 
 // Get device data (with permission check)
 router.get('/:deviceId', requireAuth, checkDeviceAccess, asyncHandler(async (req, res) => {

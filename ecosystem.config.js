@@ -67,7 +67,7 @@ module.exports = {
       RATE_LIMIT_LOGIN_MAX_REQUESTS: process.env.RATE_LIMIT_LOGIN_MAX_REQUESTS || '30',
       RECORD_RETENTION_ENABLED: process.env.RECORD_RETENTION_ENABLED || 'false',
       RECORD_RETENTION_DAYS: process.env.RECORD_RETENTION_DAYS || '365',
-      TRACKING_MAX_POINTS: process.env.TRACKING_MAX_POINTS || '15000',
+      TRACKING_MAX_POINTS: process.env.TRACKING_MAX_POINTS || '30000',
       DB_DIALECT: process.env.DB_DIALECT || 'sqlite',
       DATABASE_URL: process.env.DATABASE_URL || '',
       COOKIE_SECURE: process.env.COOKIE_SECURE || 'false'

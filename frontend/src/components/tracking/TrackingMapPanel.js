@@ -2,6 +2,7 @@ import React from 'react';
 import { Paper, Typography } from '@mui/material';
 import { Marker, Popup, Polyline } from 'react-leaflet';
 import SmartMap from '../SmartMap';
+import TrackFlowArrows from './TrackFlowArrows';
 import { trackingIcons, getSpeedBasedIcon } from '../../utils/trackingIcons';
 import { resolveTrackTimestamp } from '../../utils/trackDecimation';
 
@@ -10,6 +11,7 @@ const TrackingMapPanel = ({
   mapZoom,
   mapType,
   trackCoordinates,
+  mapTrackPoints,
   trackingData,
   currentReplayPoint,
   currentReplayIndex,
@@ -32,7 +34,10 @@ const TrackingMapPanel = ({
       </Typography>
       <SmartMap center={mapCenter} zoom={mapZoom} height="100%" mapType={mapType}>
         {trackCoordinates.length > 1 && (
-          <Polyline positions={trackCoordinates} color="blue" weight={3} opacity={0.7} />
+          <>
+            <Polyline positions={trackCoordinates} color="blue" weight={3} opacity={0.7} />
+            <TrackFlowArrows points={mapTrackPoints} />
+          </>
         )}
 
         {currentReplayPoint && (

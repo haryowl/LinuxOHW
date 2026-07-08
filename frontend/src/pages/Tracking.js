@@ -51,7 +51,7 @@ import { useSnackbar } from 'notistack';
 import { advancedGPSFilter } from '../utils/gpsFilter';
 import { decimateTrackPoints, resolveTrackTimestamp } from '../utils/trackDecimation';
 
-const MAX_MAP_POINTS = 2000;
+const MAX_MAP_POINTS = 4000;
 
 // Fix for default markers in react-leaflet
 delete L.Icon.Default.prototype._getIconUrl;
@@ -908,6 +908,7 @@ const Tracking = () => {
             mapZoom={mapZoom}
             mapType={mapType}
             trackCoordinates={trackCoordinates}
+            mapTrackPoints={mapTrack.points}
             trackingData={trackingData}
             currentReplayPoint={currentReplayPoint}
             currentReplayIndex={currentReplayIndex}
