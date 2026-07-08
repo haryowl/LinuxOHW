@@ -36,7 +36,6 @@ import {
 import { useData } from '../contexts/DataContext';
 import { useSnackbar } from 'notistack';
 import TrackingMap from '../components/TrackingMap';
-import DataChart from '../components/DataChart';
 import LoadingState from '../components/LoadingState';
 
 const Dashboard = () => {
@@ -68,12 +67,6 @@ const Dashboard = () => {
     ? (selectedDeviceImeis.length > 0
         ? devices.filter((device) => selectedDeviceImeis.includes(device.imei))
         : devices)
-    : [];
-
-  const visibleRecords = Array.isArray(records)
-    ? (selectedDeviceImeis.length > 0
-        ? records.filter((record) => selectedDeviceImeis.includes(record.deviceImei))
-        : records)
     : [];
 
   const handleRefresh = async () => {
@@ -394,21 +387,6 @@ const Dashboard = () => {
               <Box sx={{ height: 'calc(100% - 60px)', borderRadius: 2, overflow: 'hidden' }}>
                 <TrackingMap selectedImeis={selectedDeviceImeis} seedDevices={devices} />
               </Box>
-            </CardContent>
-          </Card>
-        </Grid>
-
-        {/* Data Trends Section */}
-        <Grid item xs={12}>
-          <Card>
-            <CardContent sx={{ p: 3 }}>
-              <Typography variant="h5" fontWeight="600" gutterBottom>
-                Data Trends & Analytics
-              </Typography>
-              <DataChart 
-                data={visibleRecords.slice(0, 100)}
-                compact={false}
-              />
             </CardContent>
           </Card>
         </Grid>
