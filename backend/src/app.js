@@ -544,6 +544,9 @@ async function gracefulShutdown(signal) {
     
     isShuttingDown = true;
     logger.info(`Received ${signal}, starting graceful shutdown...`);
+
+    commandQueue.stop();
+    archiveStatScheduler.stop();
     
     const shutdownTimeout = setTimeout(() => {
         logger.error('Forced shutdown after timeout');

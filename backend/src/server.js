@@ -82,15 +82,23 @@ async function startServer() {
         // Enhanced graceful shutdown that also closes database
         const originalShutdown = appShutdown;
         const enhancedShutdown = async (signal) => {
+            const commandQueue = require('./services/commandQueue');
+            const archiveStatScheduler = require('./services/archiveStatScheduler');
+            commandQueue.stop();
+            archiveStatScheduler.stop();
+
             try {
-                // Close database connection
+                await originalShutdown(signal);
+            } catch (error) {
+                logger.error('Error during app shutdown:', error);
+            }
+
+            try {
                 await sequelize.close();
                 logger.info('Database connection closed');
             } catch (error) {
                 logger.error('Error closing database:', error);
             }
-            // Call original shutdown handler
-            await originalShutdown(signal);
         };
 
         // Replace shutdown handler to include database closure

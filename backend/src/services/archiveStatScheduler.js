@@ -10,20 +10,40 @@ const archiveStatStore = require('./archiveStatStore');
 class ArchiveStatScheduler {
     constructor() {
         this.intervalId = null;
+        this.stopped = false;
     }
 
     start(intervalMs = 60000) {
+        this.stopped = false;
         if (this.intervalId) {
             clearInterval(this.intervalId);
         }
         this.intervalId = setInterval(() => {
             this.process().catch(error => {
+                if (this.stopped) {
+                    return;
+                }
+                if (error?.message?.includes('connection manager was closed')) {
+                    logger.debug('ArchiveStat scheduler skipped after database shutdown');
+                    return;
+                }
                 logger.error('ArchiveStat scheduler error:', error);
             });
         }, intervalMs);
     }
 
+    stop() {
+        this.stopped = true;
+        if (this.intervalId) {
+            clearInterval(this.intervalId);
+            this.intervalId = null;
+        }
+    }
+
     async process() {
+        if (this.stopped) {
+            return;
+        }
         const connectedImeis = connectionRegistry.getConnectedImeis();
         if (!connectedImeis || connectedImeis.length === 0) {
             return;

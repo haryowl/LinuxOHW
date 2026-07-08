@@ -9,17 +9,34 @@ const { buildCommandPacket } = require('./commandPacketBuilder');
 class CommandQueue {
     constructor() {
         this.intervalId = null;
+        this.stopped = false;
     }
 
     start(intervalMs = 5000) {
+        this.stopped = false;
         if (this.intervalId) {
             clearInterval(this.intervalId);
         }
         this.intervalId = setInterval(() => {
             this.processQueue().catch(error => {
+                if (this.stopped) {
+                    return;
+                }
+                if (error?.message?.includes('connection manager was closed')) {
+                    logger.debug('Command queue skipped after database shutdown');
+                    return;
+                }
                 logger.error('Command queue processing error:', error);
             });
         }, intervalMs);
+    }
+
+    stop() {
+        this.stopped = true;
+        if (this.intervalId) {
+            clearInterval(this.intervalId);
+            this.intervalId = null;
+        }
     }
 
     getNextAttemptAt(retryCount) {
@@ -29,6 +46,9 @@ class CommandQueue {
     }
 
     async processQueue() {
+        if (this.stopped) {
+            return;
+        }
         if (!DeviceCommand) {
             logger.error('DeviceCommand model is not loaded. Ensure backend/src/models/index.js exports DeviceCommand and the migration ran.');
             return;
