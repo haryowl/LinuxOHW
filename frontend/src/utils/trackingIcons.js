@@ -57,6 +57,40 @@ export const trackingIcons = {
   default: createCustomIcon('default', '#1976d2')
 };
 
+/** Distinct map markers for track start (green) and end (red). */
+function createEndpointIcon({ label, title, fill, stroke }) {
+  const svg = `
+    <svg width="32" height="40" viewBox="0 0 32 40" xmlns="http://www.w3.org/2000/svg">
+      <path d="M16 2C10.5 2 6 6.5 6 12c0 8.25 10 24 10 24s10-15.75 10-24c0-5.5-4.5-10-10-10z" fill="${fill}" stroke="${stroke}" stroke-width="2"/>
+      <circle cx="16" cy="12" r="7" fill="white" stroke="${stroke}" stroke-width="1"/>
+      <text x="16" y="15.5" text-anchor="middle" font-size="9" font-weight="700" fill="${stroke}" font-family="Arial,sans-serif">${label}</text>
+    </svg>
+  `;
+
+  return L.icon({
+    iconUrl: `data:image/svg+xml;base64,${btoa(svg)}`,
+    iconSize: [32, 40],
+    iconAnchor: [16, 38],
+    popupAnchor: [0, -34],
+    className: `track-endpoint-icon track-endpoint-${title}`
+  });
+}
+
+export const trackEndpointIcons = {
+  start: createEndpointIcon({
+    label: 'S',
+    title: 'start',
+    fill: '#2e7d32',
+    stroke: '#1b5e20'
+  }),
+  end: createEndpointIcon({
+    label: 'E',
+    title: 'end',
+    fill: '#d32f2f',
+    stroke: '#b71c1c'
+  })
+};
+
 // Create colored variants for different speeds
 export const getSpeedBasedIcon = (iconType, speed) => {
   let color = '#1976d2'; // default blue

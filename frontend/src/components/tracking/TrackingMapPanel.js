@@ -3,7 +3,7 @@ import { Paper, Typography } from '@mui/material';
 import { Marker, Popup, Polyline } from 'react-leaflet';
 import SmartMap from '../SmartMap';
 import TrackFlowArrows from './TrackFlowArrows';
-import { trackingIcons, getSpeedBasedIcon } from '../../utils/trackingIcons';
+import { trackingIcons, getSpeedBasedIcon, trackEndpointIcons } from '../../utils/trackingIcons';
 import { resolveTrackTimestamp } from '../../utils/trackDecimation';
 
 const TrackingMapPanel = ({
@@ -36,7 +36,7 @@ const TrackingMapPanel = ({
         {trackCoordinates.length > 1 && (
           <>
             <Polyline positions={trackCoordinates} color="blue" weight={3} opacity={0.7} />
-            <TrackFlowArrows points={mapTrackPoints} totalPoints={trackingData.length} />
+            <TrackFlowArrows points={mapTrackPoints} />
           </>
         )}
 
@@ -62,7 +62,7 @@ const TrackingMapPanel = ({
         {trackingData.length > 0 && !isReplaying && currentReplayIndex === 0 && (
           <Marker
             position={[trackingData[0].latitude, trackingData[0].longitude]}
-            icon={getCurrentIcon(trackingData[0])}
+            icon={trackEndpointIcons.start}
           >
             <Popup>
               <div>
@@ -82,7 +82,7 @@ const TrackingMapPanel = ({
               trackingData[trackingData.length - 1].latitude,
               trackingData[trackingData.length - 1].longitude
             ]}
-            icon={getCurrentIcon(trackingData[trackingData.length - 1])}
+            icon={trackEndpointIcons.end}
           >
             <Popup>
               <div>

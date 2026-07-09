@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
-import { Marker } from 'react-leaflet';
+import { Marker, Popup } from 'react-leaflet';
 import L from 'leaflet';
+import { resolveTrackTimestamp } from '../../utils/trackDecimation';
 
 function bearingDegrees(lat1, lon1, lat2, lon2) {
   const toRad = (deg) => (deg * Math.PI) / 180;
@@ -18,7 +19,22 @@ function progressColor(progress) {
   return `hsl(${hue}, 82%, 40%)`;
 }
 
-function buildArrowPlacements(points, totalPoints, maxArrows = 36) {
+function formatArrowDateTime(timestamp) {
+  if (!timestamp) {
+    return '—';
+  }
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) {
+    return '—';
+  }
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  return `${month}-${day} ${hours}:${minutes}`;
+}
+
+function buildArrowPlacements(points, maxArrows = 36) {
   if (!Array.isArray(points) || points.length < 2) {
     return [];
   }
@@ -26,7 +42,6 @@ function buildArrowPlacements(points, totalPoints, maxArrows = 36) {
   const placements = [];
   const segmentCount = points.length - 1;
   const step = Math.max(1, Math.floor(segmentCount / maxArrows));
-  const pointTotal = totalPoints || points.length;
 
   for (let i = 0; i < segmentCount; i += step) {
     const start = points[i];
@@ -41,44 +56,40 @@ function buildArrowPlacements(points, totalPoints, maxArrows = 36) {
     }
 
     const progress = segmentCount > 0 ? i / segmentCount : 0;
-    const pointNumber = Math.min(
-      pointTotal,
-      Math.max(1, Math.round(progress * (pointTotal - 1)) + 1)
-    );
+    const timestamp = resolveTrackTimestamp(start);
+    const datetimeLabel = formatArrowDateTime(timestamp);
 
     placements.push({
       lat: (lat1 + lat2) / 2,
       lon: (lon1 + lon2) / 2,
       bearing: bearingDegrees(lat1, lon1, lat2, lon2),
       color: progressColor(progress),
-      pointNumber,
-      pointTotal
+      datetimeLabel,
+      fullDatetime: timestamp ? new Date(timestamp).toLocaleString() : 'N/A',
+      segmentIndex: i
     });
   }
 
   return placements;
 }
 
-function createArrowIcon({ bearing, color, pointNumber, pointTotal }) {
-  const label = `${pointNumber}`;
-  const totalLabel = pointTotal > 0 ? `/${pointTotal}` : '';
-
+function createArrowIcon({ bearing, color, datetimeLabel }) {
   return L.divIcon({
     className: 'track-flow-arrow-icon',
     html: `
-      <div style="display:flex;flex-direction:column;align-items:center;width:34px;">
+      <div style="display:flex;flex-direction:column;align-items:center;min-width:52px;">
         <div style="
-          font-size:9px;
+          font-size:8px;
           font-weight:700;
           color:${color};
-          background:rgba(255,255,255,0.95);
+          background:rgba(255,255,255,0.96);
           border:1px solid ${color};
           border-radius:8px;
-          padding:0 4px;
-          line-height:1.3;
+          padding:1px 5px;
+          line-height:1.25;
           white-space:nowrap;
           box-shadow:0 1px 2px rgba(0,0,0,0.25);
-        ">${label}<span style="font-size:7px;font-weight:600;opacity:0.75;">${totalLabel}</span></div>
+        ">${datetimeLabel}</div>
         <div style="transform:rotate(${bearing}deg);transform-origin:center center;margin-top:1px;">
           <svg width="20" height="20" viewBox="0 0 18 18">
             <path d="M9 2 L15 16 L9 12 L3 16 Z" fill="${color}" stroke="#1b1b1b" stroke-width="0.45" opacity="0.95"/>
@@ -86,29 +97,35 @@ function createArrowIcon({ bearing, color, pointNumber, pointTotal }) {
         </div>
       </div>
     `,
-    iconSize: [34, 34],
-    iconAnchor: [17, 17]
+    iconSize: [52, 36],
+    iconAnchor: [26, 18]
   });
 }
 
-const TrackFlowArrows = ({ points, totalPoints }) => {
+const TrackFlowArrows = ({ points }) => {
   const placements = useMemo(
-    () => buildArrowPlacements(points, totalPoints),
-    [points, totalPoints]
+    () => buildArrowPlacements(points),
+    [points]
   );
 
   if (placements.length === 0) {
     return null;
   }
 
-  return placements.map((placement, index) => (
+  return placements.map((placement) => (
     <Marker
-      key={`track-arrow-${placement.pointNumber}-${index}`}
+      key={`track-arrow-${placement.segmentIndex}-${placement.datetimeLabel}`}
       position={[placement.lat, placement.lon]}
       icon={createArrowIcon(placement)}
-      interactive={false}
       zIndexOffset={-100}
-    />
+    >
+      <Popup>
+        <div>
+          <strong>Track time</strong><br />
+          {placement.fullDatetime}
+        </div>
+      </Popup>
+    </Marker>
   ));
 };
 
