@@ -102,7 +102,7 @@ function createArrowIcon({ bearing, color, datetimeLabel }) {
   });
 }
 
-const TrackFlowArrows = ({ points }) => {
+const TrackFlowArrows = ({ points, keyPrefix = 'track' }) => {
   const placements = useMemo(
     () => buildArrowPlacements(points),
     [points]
@@ -114,7 +114,7 @@ const TrackFlowArrows = ({ points }) => {
 
   return placements.map((placement) => (
     <Marker
-      key={`track-arrow-${placement.segmentIndex}-${placement.datetimeLabel}`}
+      key={`${keyPrefix}-arrow-${placement.segmentIndex}-${placement.datetimeLabel}`}
       position={[placement.lat, placement.lon]}
       icon={createArrowIcon(placement)}
       zIndexOffset={-100}

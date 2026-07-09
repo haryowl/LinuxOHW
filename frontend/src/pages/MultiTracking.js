@@ -62,6 +62,9 @@ import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 import SmartMap from '../components/SmartMap';
+import TrackFlowArrows from '../components/tracking/TrackFlowArrows';
+import { trackEndpointIcons } from '../utils/trackingIcons';
+import { resolveTrackTimestamp } from '../utils/trackDecimation';
 import { BASE_URL, fetchDevices } from '../services/api';
 import { advancedGPSFilter } from '../utils/gpsFilter';
 
@@ -330,22 +333,6 @@ const fetchDeviceTrackingData = async (deviceImei) => {
       }
     });
     return locations;
-  };
-
-  // Get tracking coordinates for polylines
-  const getTrackingCoordinates = () => {
-    const coordinates = [];
-    Object.entries(deviceTrackingData).forEach(([deviceImei, { data }]) => {
-      if (data.length > 0) {
-        const deviceCoordinates = data.map(point => [point.latitude, point.longitude]);
-        coordinates.push({
-          deviceImei,
-          color: getDeviceColor(deviceImei),
-          coordinates: deviceCoordinates
-        });
-      }
-    });
-    return coordinates;
   };
 
   // Initial data fetch
@@ -660,8 +647,8 @@ const fetchDeviceTrackingData = async (deviceImei) => {
                 mapType={mapType}
                 height="100%"
               >
-                {/* Device Markers */}
-                {getDeviceLatestLocations().map(device => (
+                {/* Latest position markers when track paths are hidden */}
+                {!showPaths && getDeviceLatestLocations().map(device => (
                   <Marker
                     key={device.deviceImei}
                     position={[device.location.latitude, device.location.longitude]}
@@ -680,17 +667,69 @@ const fetchDeviceTrackingData = async (deviceImei) => {
                     </Popup>
                   </Marker>
                 ))}
-                
-                {/* Tracking Lines */}
-                {showPaths && getTrackingCoordinates().map(({ deviceImei, color, coordinates }) => (
-                  <Polyline
-                    key={deviceImei}
-                    positions={coordinates}
-                    color={color}
-                    weight={3}
-                    opacity={0.7}
-                  />
-                ))}
+
+                {/* Per-device tracks with flow arrows and start/end markers */}
+                {showPaths && Object.entries(deviceTrackingData).map(([deviceImei, { data }]) => {
+                  if (!data || data.length === 0) {
+                    return null;
+                  }
+
+                  const color = getDeviceColor(deviceImei);
+                  const deviceName = getDeviceName(deviceImei);
+                  const coordinates = data.map((point) => [point.latitude, point.longitude]);
+                  const startPoint = data[0];
+                  const endPoint = data[data.length - 1];
+
+                  return (
+                    <React.Fragment key={`track-${deviceImei}`}>
+                      {coordinates.length > 1 && (
+                        <>
+                          <Polyline
+                            positions={coordinates}
+                            color={color}
+                            weight={3}
+                            opacity={0.7}
+                          />
+                          <TrackFlowArrows points={data} keyPrefix={deviceImei} />
+                        </>
+                      )}
+
+                      <Marker
+                        position={[startPoint.latitude, startPoint.longitude]}
+                        icon={trackEndpointIcons.start}
+                      >
+                        <Popup>
+                          <div>
+                            <strong>Start — {deviceName}</strong><br />
+                            <strong>IMEI:</strong> {deviceImei}<br />
+                            Time: {resolveTrackTimestamp(startPoint)
+                              ? new Date(resolveTrackTimestamp(startPoint)).toLocaleString()
+                              : 'N/A'}<br />
+                            Speed: {startPoint.speed || 0} km/h
+                          </div>
+                        </Popup>
+                      </Marker>
+
+                      {data.length > 1 && (
+                        <Marker
+                          position={[endPoint.latitude, endPoint.longitude]}
+                          icon={trackEndpointIcons.end}
+                        >
+                          <Popup>
+                            <div>
+                              <strong>End — {deviceName}</strong><br />
+                              <strong>IMEI:</strong> {deviceImei}<br />
+                              Time: {resolveTrackTimestamp(endPoint)
+                                ? new Date(resolveTrackTimestamp(endPoint)).toLocaleString()
+                                : 'N/A'}<br />
+                              Speed: {endPoint.speed || 0} km/h
+                            </div>
+                          </Popup>
+                        </Marker>
+                      )}
+                    </React.Fragment>
+                  );
+                })}
               </SmartMap>
             </Paper>
           </Grid>
