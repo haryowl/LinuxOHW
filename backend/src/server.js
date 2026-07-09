@@ -20,7 +20,7 @@ const { ensureDeviceArchiveStatTable } = require('./utils/ensureDeviceArchiveSta
 const archiveStatStore = require('./services/archiveStatStore');
 const recordRetention = require('./services/recordRetention');
 const storageCleanup = require('./services/storageCleanup');
-const { buildSequelizeOptions } = require('./config/database');
+const { buildSequelizeOptions, isPostgresDialect, resolveDialect } = require('./config/database');
 
 // Middleware - CORS is already configured in app.js
 app.use(express.json());
@@ -53,16 +53,19 @@ function broadcast(topic, data) {
 // Start the server
 async function startServer() {
     try {
-        // Sync database
-        await sequelize.sync();
-        logger.info('Database synced');
+        const dbConfig = buildSequelizeOptions();
+        if (isPostgresDialect(resolveDialect())) {
+            logger.info('Postgres mode: skipping sequelize.sync() (schema from pgloader/migrations)');
+        } else {
+            await sequelize.sync();
+            logger.info('Database synced');
+        }
 
         await ensureRecordIndexes(sequelize);
         await ensureDeviceLocationColumns(sequelize);
         await ensureDeviceArchiveStatTable(sequelize);
         await archiveStatStore.loadFromDatabase();
 
-        const dbConfig = buildSequelizeOptions();
         if (!dbConfig.url) {
             await sequelize.query('PRAGMA journal_mode = WAL;');
             await sequelize.query('PRAGMA busy_timeout = 5000;');
