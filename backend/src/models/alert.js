@@ -14,7 +14,7 @@ module.exports = (sequelize) => {
             allowNull: false
         },
         ruleId: {
-            type: DataTypes.INTEGER,
+            type: DataTypes.UUID,
             allowNull: false,
             references: {
                 model: 'AlertRules',
