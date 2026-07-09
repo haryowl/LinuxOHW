@@ -13,12 +13,14 @@ function getApiBaseUrl() {
   }
 
   const url = new URL(currentUrl);
+  const protocol = url.protocol === 'https:' ? 'https:' : 'http:';
+
+  // Production nginx serves API on the same port as the frontend (/api proxy).
   if (url.port === FRONTEND_PORT || !url.port) {
-    const protocol = url.protocol === 'https:' ? 'https:' : 'http:';
-    return `${protocol}//${url.hostname}:${BACKEND_PORT}`;
+    const host = url.port ? url.host : `${url.hostname}:${FRONTEND_PORT}`;
+    return `${protocol}//${host}`;
   }
 
-  const protocol = url.protocol === 'https:' ? 'https:' : 'http:';
   return `${protocol}//${url.host}`;
 }
 
@@ -27,6 +29,5 @@ export const BASE_URL = getApiBaseUrl();
 export function getWebSocketUrl() {
   const base = new URL(BASE_URL);
   const wsProtocol = base.protocol === 'https:' ? 'wss:' : 'ws:';
-  const host = base.port === FRONTEND_PORT ? `${base.hostname}:${BACKEND_PORT}` : base.host;
-  return `${wsProtocol}//${host}/ws`;
+  return `${wsProtocol}//${base.host}/ws`;
 }
