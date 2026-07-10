@@ -21,8 +21,9 @@
  *   --interval-ms   Delay between packets per device (default 0)
  *   --ack-timeout   ACK wait timeout ms (default 15000)
  *   --imei-prefix   First 12 digits shared by test IMEIs (default 999000000000)
- *   --verify-db     Count Records inserted for test IMEIs (requires env.production)
- *   --json          Print machine-readable summary JSON
+ *   --chunk-mode    full | partial | random | split-header | byte (default full)
+ *   --chunk-size    Bytes per write in partial mode (default 7)
+ *   --chunk-delay   Delay ms between chunk writes (default 0)
  */
 
 const net = require('net');
@@ -42,6 +43,9 @@ function parseArgs(argv) {
     intervalMs: 0,
     ackTimeoutMs: 15000,
     imeiPrefix: '999000000000',
+    chunkMode: 'full',
+    chunkSize: 7,
+    chunkDelayMs: 0,
     verifyDb: false,
     json: false
   };
@@ -82,6 +86,18 @@ function parseArgs(argv) {
         options.imeiPrefix = next;
         i += 1;
         break;
+      case '--chunk-mode':
+        options.chunkMode = next;
+        i += 1;
+        break;
+      case '--chunk-size':
+        options.chunkSize = Number(next);
+        i += 1;
+        break;
+      case '--chunk-delay':
+        options.chunkDelayMs = Number(next);
+        i += 1;
+        break;
       case '--verify-db':
         options.verifyDb = true;
         break;
@@ -102,6 +118,66 @@ function parseArgs(argv) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function buildChunkPlan(packet, options, deviceIndex, packetIndex) {
+  const mode = options.chunkMode;
+  const chunks = [];
+
+  if (mode === 'full') {
+    return [packet];
+  }
+
+  if (mode === 'byte') {
+    for (let offset = 0; offset < packet.length; offset++) {
+      chunks.push(packet.slice(offset, offset + 1));
+    }
+    return chunks;
+  }
+
+  if (mode === 'split-header') {
+    // Exercises 1–2 byte TCP remainders at frame start (HEAD + partial LENGTH)
+    const splitAt = 2 + ((deviceIndex + packetIndex) % 2);
+    chunks.push(packet.slice(0, splitAt));
+    chunks.push(packet.slice(splitAt));
+    return chunks;
+  }
+
+  if (mode === 'random') {
+    let offset = 0;
+    let seed = deviceIndex * 1000 + packetIndex * 17 + 3;
+    const rand = () => {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      return seed;
+    };
+    while (offset < packet.length) {
+      const maxChunk = Math.min(31, packet.length - offset);
+      const size = 1 + (rand() % maxChunk);
+      chunks.push(packet.slice(offset, offset + size));
+      offset += size;
+    }
+    return chunks;
+  }
+
+  // partial: fixed-size chunks
+  const size = Math.max(1, options.chunkSize || 7);
+  for (let offset = 0; offset < packet.length; offset += size) {
+    chunks.push(packet.slice(offset, offset + size));
+  }
+  return chunks;
+}
+
+async function sendPacketChunked(socket, packet, options, deviceIndex, packetIndex) {
+  const chunks = buildChunkPlan(packet, options, deviceIndex, packetIndex);
+  for (const chunk of chunks) {
+    await new Promise((resolve, reject) => {
+      socket.write(chunk, (error) => (error ? reject(error) : resolve()));
+    });
+    if (options.chunkDelayMs > 0) {
+      await sleep(options.chunkDelayMs);
+    }
+  }
+  return chunks.length;
 }
 
 function buildTestImei(prefix, deviceIndex) {
@@ -183,6 +259,7 @@ async function runDeviceSimulation(deviceIndex, options) {
     acksReceived: 0,
     recordsSent: 0,
     bytesSent: 0,
+    chunksSent: 0,
     failures: [],
     ackLatenciesMs: []
   };
@@ -195,7 +272,8 @@ async function runDeviceSimulation(deviceIndex, options) {
     stats.connected = true;
 
     const regPacket = buildImeiRegistrationPacket(imei);
-    socket.write(regPacket);
+    const regChunks = await sendPacketChunked(socket, regPacket, options, deviceIndex, 0);
+    stats.chunksSent += regChunks;
     stats.bytesSent += regPacket.length;
     const regAckStart = performance.now();
     await waitForAck(socket, options.ackTimeoutMs);
@@ -218,7 +296,8 @@ async function runDeviceSimulation(deviceIndex, options) {
       stats.recordsSent += built.recordCount;
 
       const ackStart = performance.now();
-      socket.write(built.packet);
+      const chunkCount = await sendPacketChunked(socket, built.packet, options, deviceIndex, packetIndex + 1);
+      stats.chunksSent += chunkCount;
       stats.packetsSent += 1;
       stats.bytesSent += built.packet.length;
 
@@ -258,6 +337,7 @@ function summarize(deviceStats, options, totalDurationMs) {
   const totalAcks = deviceStats.reduce((sum, item) => sum + item.acksReceived, 0);
   const totalRecords = deviceStats.reduce((sum, item) => sum + item.recordsSent, 0);
   const totalBytes = deviceStats.reduce((sum, item) => sum + item.bytesSent, 0);
+  const totalChunks = deviceStats.reduce((sum, item) => sum + item.chunksSent, 0);
   const totalFailures = deviceStats.reduce((sum, item) => sum + item.failures.length, 0);
   const connected = deviceStats.filter((item) => item.connected).length;
   const registered = deviceStats.filter((item) => item.registrationAck).length;
@@ -269,6 +349,8 @@ function summarize(deviceStats, options, totalDurationMs) {
     devices: options.devices,
     packetsPerDevice: options.packets,
     maxPacketDataBytes: options.maxSize,
+    chunkMode: options.chunkMode,
+    chunkSize: options.chunkSize,
     totalDurationMs,
     connectedDevices: connected,
     registeredDevices: registered,
@@ -276,6 +358,7 @@ function summarize(deviceStats, options, totalDurationMs) {
     totalAcks,
     totalRecordsAttempted: totalRecords,
     totalBytesSent: totalBytes,
+    totalChunksSent: totalChunks,
     failures: totalFailures,
     throughputPacketsPerSec: totalDurationMs > 0
       ? Number((totalPackets / (totalDurationMs / 1000)).toFixed(2))
@@ -345,6 +428,7 @@ async function main() {
   console.log(`Target: ${options.host}:${options.port}`);
   console.log(`Devices: ${options.devices} concurrent`);
   console.log(`Packets/device: ${options.packets} (max data ${options.maxSize} bytes, multi-record)`);
+  console.log(`Chunk mode: ${options.chunkMode}${options.chunkMode === 'partial' ? ` (size ${options.chunkSize})` : ''}`);
   console.log('');
 
   const startedAt = performance.now();
@@ -380,6 +464,8 @@ function printHumanSummary(summary) {
   console.log(`ACKs received: ${summary.totalAcks}`);
   console.log(`Records in packets: ${summary.totalRecordsAttempted}`);
   console.log(`Bytes sent: ${summary.totalBytesSent}`);
+  console.log(`TCP chunks sent: ${summary.totalChunksSent}`);
+  console.log(`Chunk mode: ${summary.chunkMode}`);
   console.log(`Throughput: ${summary.throughputPacketsPerSec} packets/s, ${summary.throughputRecordsPerSec} records/s`);
   console.log(`ACK latency avg/p95/max: ${summary.avgAckLatencyMs}/${summary.p95AckLatencyMs}/${summary.maxAckLatencyMs} ms`);
   console.log(`Failures: ${summary.failures}`);
@@ -392,7 +478,7 @@ function printHumanSummary(summary) {
       ? `FAIL (${device.failures[0]})`
       : 'OK';
     console.log(
-      `#${String(device.deviceIndex).padStart(2, '0')} ${device.imei} | packets=${device.packetsSent} records=${device.recordsSent} acks=${device.acksReceived} avgAck=${device.avgAckLatencyMs}ms | ${status}`
+      `#${String(device.deviceIndex).padStart(2, '0')} ${device.imei} | packets=${device.packetsSent} records=${device.recordsSent} chunks=${device.chunksSent} acks=${device.acksReceived} avgAck=${device.avgAckLatencyMs}ms | ${status}`
     );
   }
 
