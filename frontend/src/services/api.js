@@ -217,6 +217,62 @@ export async function runStorageCleanup(section) {
   });
 }
 
+export async function previewDeleteRecords({ imeis, startDate, endDate }) {
+  return authenticatedFetch(`${BASE_URL}/api/settings/records/preview-delete`, {
+    method: 'POST',
+    body: JSON.stringify({ imeis, startDate, endDate }),
+  });
+}
+
+export async function deleteRecords({ imeis, startDate, endDate, expectedCount }) {
+  return authenticatedFetch(`${BASE_URL}/api/settings/records/delete`, {
+    method: 'POST',
+    body: JSON.stringify({
+      imeis,
+      startDate,
+      endDate,
+      confirm: true,
+      expectedCount,
+    }),
+  });
+}
+
+export async function analyzeRecordGaps({ imeis, startDate, endDate }) {
+  return authenticatedFetch(`${BASE_URL}/api/settings/records/gap-analysis`, {
+    method: 'POST',
+    body: JSON.stringify({ imeis, startDate, endDate }),
+  });
+}
+
+export async function fetchIngestAuditStatus() {
+  return authenticatedFetch(`${BASE_URL}/api/settings/ingest-audit/status`);
+}
+
+export async function fetchIngestAuditSummary({ imeis, startDate, endDate }) {
+  const params = new URLSearchParams({ startDate, endDate });
+  if (imeis?.length) {
+    params.set('imeis', imeis.join(','));
+  }
+  return authenticatedFetch(`${BASE_URL}/api/settings/ingest-audit/summary?${params.toString()}`);
+}
+
+export function getIntegrityExportUrl({ imeis, startDate, endDate }) {
+  const params = new URLSearchParams({ startDate, endDate });
+  if (imeis?.length) {
+    params.set('imeis', imeis.join(','));
+  }
+  return `${BASE_URL}/api/settings/records/integrity-export?${params.toString()}`;
+}
+
+export async function downloadIntegrityExport({ imeis, startDate, endDate }) {
+  const response = await authenticatedFetch(getIntegrityExportUrl({ imeis, startDate, endDate }));
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to export integrity report');
+  }
+  return response.blob();
+}
+
 export async function startAsyncExport(payload) {
   return authenticatedFetch(`${BASE_URL}/api/records/export/async`, {
     method: 'POST',

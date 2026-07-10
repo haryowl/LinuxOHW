@@ -135,23 +135,36 @@ function extractPackets(state, incomingData) {
 }
 
 async function processPacket(packet, socket, clientAddress, parser, connectionRegistry) {
-    const parsedData = await parser.parse(packet, clientAddress);
-    const imei = parser.getIMEI(clientAddress);
-    if (imei) {
-        connectionRegistry.bindImeiToConnection(imei, clientAddress);
-        const commandQueue = require('./commandQueue');
-        commandQueue.processQueueForImei(imei).catch((error) => {
-            logger.warn('Failed to process queued commands after device connect', {
-                imei,
-                error: error.message
+    const ingestAuditService = require('./ingestAuditService');
+    let imei = parser.getIMEI(clientAddress);
+    let parsedData;
+    let ackHeader;
+
+    try {
+        parsedData = await parser.parse(packet, clientAddress);
+        imei = parser.getIMEI(clientAddress);
+        ingestAuditService.trackPacketParsed(imei, parsedData?.records?.length || 0);
+
+        if (imei) {
+            connectionRegistry.bindImeiToConnection(imei, clientAddress);
+            const commandQueue = require('./commandQueue');
+            commandQueue.processQueueForImei(imei).catch((error) => {
+                logger.warn('Failed to process queued commands after device connect', {
+                    imei,
+                    error: error.message
+                });
             });
-        });
+        }
+
+        await parser.ensurePacketTelemetryPersisted(clientAddress);
+
+        ackHeader = parsedData?.ackHeader || (packet.readUInt8(0) === 0x07 ? 0x07 : 0x02);
+        sendConfirmation(socket, packet, clientAddress, ackHeader);
+        ingestAuditService.trackAck(imei);
+    } catch (error) {
+        ingestAuditService.trackParseError(imei);
+        throw error;
     }
-
-    await parser.ensurePacketTelemetryPersisted(clientAddress);
-
-    const ackHeader = parsedData?.ackHeader || (packet.readUInt8(0) === 0x07 ? 0x07 : 0x02);
-    sendConfirmation(socket, packet, clientAddress, ackHeader);
 
     logger.info('Packet parsed successfully', {
         address: clientAddress,

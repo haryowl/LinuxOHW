@@ -18,9 +18,12 @@ const { ensureRecordIndexes } = require('./utils/ensureRecordIndexes');
 const { ensureDeviceLocationColumns } = require('./utils/ensureDeviceLocationColumns');
 const { ensureDeviceCommandBroadcastColumn } = require('./utils/ensureDeviceCommandBroadcastColumn');
 const { ensureDeviceArchiveStatTable } = require('./utils/ensureDeviceArchiveStatTable');
+const { ensureIngestAuditTable } = require('./utils/ensureIngestAuditTable');
 const archiveStatStore = require('./services/archiveStatStore');
 const recordRetention = require('./services/recordRetention');
 const storageCleanup = require('./services/storageCleanup');
+const ingestAuditService = require('./services/ingestAuditService');
+const { IngestAuditSummary } = require('./models');
 const { buildSequelizeOptions, isPostgresDialect, resolveDialect } = require('./config/database');
 
 // Middleware - CORS is already configured in app.js
@@ -66,7 +69,10 @@ async function startServer() {
         await ensureDeviceLocationColumns(sequelize);
         await ensureDeviceCommandBroadcastColumn(sequelize);
         await ensureDeviceArchiveStatTable(sequelize);
+        await ensureIngestAuditTable(sequelize);
         await archiveStatStore.loadFromDatabase();
+        ingestAuditService.bindModel(IngestAuditSummary, sequelize);
+        ingestAuditService.start();
 
         if (!dbConfig.url) {
             await sequelize.query('PRAGMA journal_mode = WAL;');
@@ -91,6 +97,12 @@ async function startServer() {
             const archiveStatScheduler = require('./services/archiveStatScheduler');
             commandQueue.stop();
             archiveStatScheduler.stop();
+            ingestAuditService.stop();
+            try {
+                await ingestAuditService.flush();
+            } catch (error) {
+                logger.error('Error flushing ingest audit buffer:', error);
+            }
 
             try {
                 await originalShutdown(signal);

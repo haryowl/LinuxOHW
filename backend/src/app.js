@@ -579,6 +579,14 @@ async function gracefulShutdown(signal) {
 
     commandQueue.stop();
     archiveStatScheduler.stop();
+
+    try {
+        const ingestAuditService = require('./services/ingestAuditService');
+        ingestAuditService.stop();
+        await ingestAuditService.flush();
+    } catch (error) {
+        logger.error('Error flushing ingest audit buffer:', error);
+    }
     
     const shutdownTimeout = setTimeout(() => {
         logger.error('Forced shutdown after timeout');

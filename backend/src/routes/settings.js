@@ -278,4 +278,96 @@
         res.json({ message: `${section} cleanup completed`, result, config: getStorageConfig() });
     }));
 
+    const recordManagementService = require('../services/recordManagementService');
+    const ingestAuditService = require('../services/ingestAuditService');
+
+    router.post('/records/preview-delete', requireAdmin, asyncHandler(async (req, res) => {
+        const { imeis, startDate, endDate } = req.body;
+        const preview = await recordManagementService.countMatchingRecords({ imeis, startDate, endDate });
+        res.json(preview);
+    }));
+
+    router.post('/records/delete', requireAdmin, asyncHandler(async (req, res) => {
+        const { imeis, startDate, endDate, confirm, expectedCount } = req.body;
+        if (!confirm) {
+            return res.status(400).json({ error: 'confirm: true is required to delete records' });
+        }
+
+        const preview = await recordManagementService.countMatchingRecords({ imeis, startDate, endDate });
+        if (expectedCount !== undefined && Number(expectedCount) !== preview.total) {
+            return res.status(409).json({
+                error: 'Record count changed since preview. Please preview again.',
+                preview
+            });
+        }
+
+        const result = await recordManagementService.deleteMatchingRecords({ imeis, startDate, endDate });
+        res.json({
+            message: 'Records deleted',
+            deleted: result.deleted,
+            ...preview
+        });
+    }));
+
+    router.post('/records/gap-analysis', requireAdmin, asyncHandler(async (req, res) => {
+        const { imeis, startDate, endDate } = req.body;
+        const report = await recordManagementService.analyzeRecordGaps({ imeis, startDate, endDate });
+        res.json(report);
+    }));
+
+    router.get('/records/integrity-export', requireAdmin, asyncHandler(async (req, res) => {
+        const { startDate, endDate, imeis } = req.query;
+        if (!startDate || !endDate) {
+            return res.status(400).json({ error: 'startDate and endDate query parameters are required' });
+        }
+
+        const parsedImeis = typeof imeis === 'string' && imeis.trim()
+            ? imeis.split(',').map((value) => value.trim()).filter(Boolean)
+            : [];
+
+        const report = await recordManagementService.analyzeRecordGaps({
+            imeis: parsedImeis,
+            startDate,
+            endDate
+        });
+
+        let ingestSummary = null;
+        try {
+            ingestSummary = await ingestAuditService.getSummary({
+                imeis: parsedImeis,
+                startDate,
+                endDate
+            });
+        } catch (error) {
+            console.warn('Ingest audit summary unavailable for integrity export:', error.message);
+        }
+
+        const csv = recordManagementService.buildIntegrityCsv(report, ingestSummary);
+        res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+        res.setHeader('Content-Disposition', `attachment; filename="integrity-report-${Date.now()}.csv"`);
+        res.send(csv);
+    }));
+
+    router.get('/ingest-audit/status', requireAdmin, asyncHandler(async (req, res) => {
+        res.json(ingestAuditService.getStatus());
+    }));
+
+    router.get('/ingest-audit/summary', requireAdmin, asyncHandler(async (req, res) => {
+        const { startDate, endDate, imeis } = req.query;
+        if (!startDate || !endDate) {
+            return res.status(400).json({ error: 'startDate and endDate query parameters are required' });
+        }
+
+        const parsedImeis = typeof imeis === 'string' && imeis.trim()
+            ? imeis.split(',').map((value) => value.trim()).filter(Boolean)
+            : [];
+
+        const summary = await ingestAuditService.getSummary({
+            imeis: parsedImeis,
+            startDate,
+            endDate
+        });
+        res.json(summary);
+    }));
+
     module.exports = router;

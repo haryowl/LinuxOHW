@@ -22,7 +22,14 @@ import {
   ListItemSecondaryAction,
   Chip,
   useTheme,
-  MenuItem
+  MenuItem,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableRow,
+  TableContainer,
+  Paper
 } from '@mui/material';
 import {
   Save as SaveIcon,
@@ -38,7 +45,9 @@ import {
   Error as ErrorIcon,
   Settings as SettingsIcon,
   DarkMode as DarkModeIcon,
-  LightMode as LightModeIcon
+  LightMode as LightModeIcon,
+  Delete as DeleteIcon,
+  Assessment as AssessmentIcon
 } from '@mui/icons-material';
 // import axios from 'axios';
 import { BASE_URL } from '../services/api';
@@ -58,7 +67,13 @@ import {
   runRetentionPurge,
   fetchStorageConfig,
   updateStorageConfig,
-  runStorageCleanup
+  runStorageCleanup,
+  previewDeleteRecords,
+  deleteRecords,
+  analyzeRecordGaps,
+  downloadIntegrityExport,
+  fetchIngestAuditStatus,
+  fetchIngestAuditSummary
 } from '../services/api';
 
 const Settings = () => {
@@ -128,6 +143,164 @@ const Settings = () => {
   });
   const [isLoadingStorage, setIsLoadingStorage] = useState(false);
   const [isRunningCleanup, setIsRunningCleanup] = useState(false);
+
+  const getDataManagementPeriodDates = useCallback((period) => {
+    const end = new Date();
+    const start = new Date();
+    if (period === '24h') {
+      start.setHours(start.getHours() - 24);
+    } else if (period === '7d') {
+      start.setDate(start.getDate() - 7);
+    } else if (period === '30d') {
+      start.setDate(start.getDate() - 30);
+    }
+    return {
+      startDate: start.toISOString().slice(0, 16),
+      endDate: end.toISOString().slice(0, 16)
+    };
+  }, []);
+
+  const initialDmDates = getDataManagementPeriodDates('24h');
+  const [dmImeis, setDmImeis] = useState([]);
+  const [dmStartDate, setDmStartDate] = useState(initialDmDates.startDate);
+  const [dmEndDate, setDmEndDate] = useState(initialDmDates.endDate);
+  const [dmPeriod, setDmPeriod] = useState('24h');
+  const [dmPreviewCount, setDmPreviewCount] = useState(null);
+  const [dmGapReport, setDmGapReport] = useState(null);
+  const [dmIngestStatus, setDmIngestStatus] = useState(null);
+  const [dmIngestSummary, setDmIngestSummary] = useState(null);
+  const [dmDeleteDialogOpen, setDmDeleteDialogOpen] = useState(false);
+  const [isDmLoading, setIsDmLoading] = useState(false);
+  const [isDmDeleting, setIsDmDeleting] = useState(false);
+
+  const getDataManagementPayload = useCallback(() => ({
+    imeis: dmImeis,
+    startDate: new Date(dmStartDate).toISOString(),
+    endDate: new Date(dmEndDate).toISOString()
+  }), [dmImeis, dmStartDate, dmEndDate]);
+
+  const loadIngestAuditStatus = useCallback(async () => {
+    if (!isAdmin) return;
+    try {
+      const response = await fetchIngestAuditStatus();
+      if (response.ok) {
+        setDmIngestStatus(await response.json());
+      }
+    } catch (error) {
+      console.error('Failed to load ingest audit status:', error);
+    }
+  }, [isAdmin]);
+
+  const handleDmPeriodChange = (period) => {
+    setDmPeriod(period);
+    if (period !== 'custom') {
+      const dates = getDataManagementPeriodDates(period);
+      setDmStartDate(dates.startDate);
+      setDmEndDate(dates.endDate);
+    }
+    setDmPreviewCount(null);
+    setDmGapReport(null);
+    setDmIngestSummary(null);
+  };
+
+  const handleDmPreviewDelete = async () => {
+    setIsDmLoading(true);
+    try {
+      const response = await previewDeleteRecords(getDataManagementPayload());
+      const data = await response.json();
+      if (response.ok) {
+        setDmPreviewCount(data.total);
+        showSnackbar(`Preview: ${data.total.toLocaleString()} record(s) match`, 'info');
+      } else {
+        showSnackbar(data.error || 'Preview failed', 'error');
+      }
+    } catch (error) {
+      showSnackbar('Preview failed', 'error');
+    } finally {
+      setIsDmLoading(false);
+    }
+  };
+
+  const handleDmConfirmDelete = async () => {
+    setIsDmDeleting(true);
+    try {
+      const response = await deleteRecords({
+        ...getDataManagementPayload(),
+        expectedCount: dmPreviewCount
+      });
+      const data = await response.json();
+      if (response.ok) {
+        showSnackbar(`Deleted ${data.deleted.toLocaleString()} record(s)`, 'success');
+        setDmPreviewCount(null);
+        setDmGapReport(null);
+        setDmDeleteDialogOpen(false);
+      } else {
+        showSnackbar(data.error || 'Delete failed', 'error');
+        if (data.preview) {
+          setDmPreviewCount(data.preview.total);
+        }
+      }
+    } catch (error) {
+      showSnackbar('Delete failed', 'error');
+    } finally {
+      setIsDmDeleting(false);
+    }
+  };
+
+  const handleDmGapAnalysis = async () => {
+    setIsDmLoading(true);
+    try {
+      const response = await analyzeRecordGaps(getDataManagementPayload());
+      const data = await response.json();
+      if (response.ok) {
+        setDmGapReport(data);
+        showSnackbar(`Analyzed ${data.summary.deviceCount} device(s)`, 'success');
+      } else {
+        showSnackbar(data.error || 'Gap analysis failed', 'error');
+      }
+    } catch (error) {
+      showSnackbar('Gap analysis failed', 'error');
+    } finally {
+      setIsDmLoading(false);
+    }
+  };
+
+  const handleDmExportIntegrity = async () => {
+    setIsDmLoading(true);
+    try {
+      const blob = await downloadIntegrityExport(getDataManagementPayload());
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `integrity-report-${Date.now()}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      showSnackbar('Integrity report downloaded', 'success');
+    } catch (error) {
+      showSnackbar(error.message || 'Export failed', 'error');
+    } finally {
+      setIsDmLoading(false);
+    }
+  };
+
+  const handleDmLoadIngestSummary = async () => {
+    setIsDmLoading(true);
+    try {
+      const response = await fetchIngestAuditSummary(getDataManagementPayload());
+      const data = await response.json();
+      if (response.ok) {
+        setDmIngestSummary(data);
+      } else {
+        showSnackbar(data.error || 'Failed to load ingest audit summary', 'error');
+      }
+    } catch (error) {
+      showSnackbar('Failed to load ingest audit summary', 'error');
+    } finally {
+      setIsDmLoading(false);
+    }
+  };
 
   const showSnackbar = (message, severity) => {
     setSnackbar({
@@ -428,7 +601,8 @@ const Settings = () => {
       } catch (e) {}
     };
     loadDevices();
-  }, []);
+    loadIngestAuditStatus();
+  }, [loadIngestAuditStatus]);
 
   const handleSave = async () => {
     try {
@@ -1334,6 +1508,222 @@ const Settings = () => {
           </Grid>
         )}
 
+        {isAdmin && (
+          <Grid item xs={12}>
+            <Card sx={{ mt: 1 }}>
+              <CardContent>
+                <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+                  <StorageIcon sx={{ mr: 1.5, color: theme.palette.error.main }} />
+                  <Typography variant="h6">Record Data Management</Typography>
+                </Box>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                  Filter by IMEI and time period. Preview before delete. Integrity tools use record numbers and optional ingest audit counters.
+                </Typography>
+
+                <Grid container spacing={2}>
+                  <Grid item xs={12} md={6}>
+                    <TextField
+                      label="Device IMEIs (optional — empty = all devices)"
+                      select
+                      SelectProps={{ multiple: true }}
+                      value={dmImeis}
+                      onChange={(e) => {
+                        setDmImeis(e.target.value);
+                        setDmPreviewCount(null);
+                        setDmGapReport(null);
+                        setDmIngestSummary(null);
+                      }}
+                      fullWidth
+                    >
+                      {deviceOptions.map((opt) => (
+                        <MenuItem key={opt.value} value={opt.value}>{opt.label}</MenuItem>
+                      ))}
+                    </TextField>
+                  </Grid>
+                  <Grid item xs={12} md={6}>
+                    <TextField
+                      label="Period preset"
+                      select
+                      value={dmPeriod}
+                      onChange={(e) => handleDmPeriodChange(e.target.value)}
+                      fullWidth
+                    >
+                      <MenuItem value="24h">Last 24 hours</MenuItem>
+                      <MenuItem value="7d">Last 7 days</MenuItem>
+                      <MenuItem value="30d">Last 30 days</MenuItem>
+                      <MenuItem value="custom">Custom range</MenuItem>
+                    </TextField>
+                  </Grid>
+                  <Grid item xs={12} sm={6}>
+                    <TextField
+                      label="Start"
+                      type="datetime-local"
+                      value={dmStartDate}
+                      onChange={(e) => {
+                        setDmPeriod('custom');
+                        setDmStartDate(e.target.value);
+                        setDmPreviewCount(null);
+                      }}
+                      fullWidth
+                      InputLabelProps={{ shrink: true }}
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6}>
+                    <TextField
+                      label="End"
+                      type="datetime-local"
+                      value={dmEndDate}
+                      onChange={(e) => {
+                        setDmPeriod('custom');
+                        setDmEndDate(e.target.value);
+                        setDmPreviewCount(null);
+                      }}
+                      fullWidth
+                      InputLabelProps={{ shrink: true }}
+                    />
+                  </Grid>
+                </Grid>
+
+                <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mt: 2 }}>
+                  <Button
+                    variant="outlined"
+                    startIcon={<AssessmentIcon />}
+                    onClick={handleDmPreviewDelete}
+                    disabled={isDmLoading}
+                  >
+                    Preview Delete Count
+                  </Button>
+                  <Button
+                    variant="outlined"
+                    color="error"
+                    startIcon={<DeleteIcon />}
+                    onClick={() => setDmDeleteDialogOpen(true)}
+                    disabled={isDmLoading || dmPreviewCount === null || dmPreviewCount === 0}
+                  >
+                    Delete Records
+                  </Button>
+                  <Button
+                    variant="outlined"
+                    onClick={handleDmGapAnalysis}
+                    disabled={isDmLoading}
+                  >
+                    Analyze Gaps
+                  </Button>
+                  <Button
+                    variant="outlined"
+                    startIcon={<ExportIcon />}
+                    onClick={handleDmExportIntegrity}
+                    disabled={isDmLoading}
+                  >
+                    Export Integrity CSV
+                  </Button>
+                  <Button
+                    variant="outlined"
+                    onClick={handleDmLoadIngestSummary}
+                    disabled={isDmLoading}
+                  >
+                    Load Ingest Audit
+                  </Button>
+                </Box>
+
+                {dmPreviewCount !== null && (
+                  <Alert severity="warning" sx={{ mt: 2 }}>
+                    {dmPreviewCount.toLocaleString()} record(s) will be deleted for the selected filters.
+                  </Alert>
+                )}
+
+                {dmGapReport && (
+                  <Box sx={{ mt: 3 }}>
+                    <Typography variant="subtitle1" gutterBottom>Gap Analysis Summary</Typography>
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                      Devices: {dmGapReport.summary.deviceCount} | Saved: {dmGapReport.summary.totalSaved.toLocaleString()} |
+                      Missing estimate: {dmGapReport.summary.totalMissingEstimate.toLocaleString()} |
+                      Devices with gaps: {dmGapReport.summary.devicesWithGaps}
+                    </Typography>
+                    <TableContainer component={Paper} variant="outlined">
+                      <Table size="small">
+                        <TableHead>
+                          <TableRow>
+                            <TableCell>IMEI</TableCell>
+                            <TableCell align="right">Saved</TableCell>
+                            <TableCell align="right">With #</TableCell>
+                            <TableCell align="right">Missing est.</TableCell>
+                            <TableCell>Gaps</TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {dmGapReport.devices.slice(0, 20).map((device) => (
+                            <TableRow key={device.imei}>
+                              <TableCell>{device.imei}</TableCell>
+                              <TableCell align="right">{device.savedCount}</TableCell>
+                              <TableCell align="right">{device.withRecordNumber}</TableCell>
+                              <TableCell align="right">{device.missingEstimate}</TableCell>
+                              <TableCell>
+                                {device.gapRanges.slice(0, 3).map((gap) => `${gap.from}-${gap.to} (${gap.missing})`).join('; ')}
+                                {device.gapRanges.length > 3 ? '…' : ''}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
+                  </Box>
+                )}
+
+                <Box sx={{ mt: 3 }}>
+                  <Typography variant="subtitle1" gutterBottom>Ingest Audit (Phase 2 lite)</Typography>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                    Server-side counters per IMEI per minute. Disabled by default — set INGEST_AUDIT_ENABLED=true on the server to collect data.
+                  </Typography>
+                  {dmIngestStatus && (
+                    <Chip
+                      label={dmIngestStatus.enabled ? 'Audit enabled on server' : 'Audit disabled on server'}
+                      color={dmIngestStatus.enabled ? 'success' : 'default'}
+                      size="small"
+                      sx={{ mr: 1, mb: 1 }}
+                    />
+                  )}
+                  {dmIngestSummary?.summary && (
+                    <Typography variant="body2" sx={{ mb: 1 }}>
+                      Parsed: {dmIngestSummary.summary.recordsParsed.toLocaleString()} |
+                      Saved: {dmIngestSummary.summary.recordsSaved.toLocaleString()} |
+                      Parse loss est.: {dmIngestSummary.summary.parseLossEstimate.toLocaleString()} |
+                      Parse errors: {dmIngestSummary.summary.parseErrors} |
+                      Save errors: {dmIngestSummary.summary.saveErrors}
+                    </Typography>
+                  )}
+                  {dmIngestSummary?.devices?.length > 0 && (
+                    <TableContainer component={Paper} variant="outlined">
+                      <Table size="small">
+                        <TableHead>
+                          <TableRow>
+                            <TableCell>IMEI</TableCell>
+                            <TableCell align="right">Parsed</TableCell>
+                            <TableCell align="right">Saved</TableCell>
+                            <TableCell align="right">Loss est.</TableCell>
+                            <TableCell align="right">ACKs</TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {dmIngestSummary.devices.slice(0, 20).map((device) => (
+                            <TableRow key={device.imei}>
+                              <TableCell>{device.imei}</TableCell>
+                              <TableCell align="right">{device.recordsParsed}</TableCell>
+                              <TableCell align="right">{device.recordsSaved}</TableCell>
+                              <TableCell align="right">{device.parseLossEstimate}</TableCell>
+                              <TableCell align="right">{device.acksSent}</TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
+                  )}
+                </Box>
+              </CardContent>
+            </Card>
+          </Grid>
+        )}
+
         <Grid item xs={12} md={6}>
           <Card sx={{ mt: 4 }}>
             <CardContent>
@@ -1425,6 +1815,24 @@ const Settings = () => {
       </Grid>
 
       {/* Dialogs */}
+      <Dialog open={dmDeleteDialogOpen} onClose={() => setDmDeleteDialogOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Confirm Record Deletion</DialogTitle>
+        <DialogContent>
+          <Typography variant="body1" sx={{ mb: 1 }}>
+            This will permanently delete {dmPreviewCount?.toLocaleString() || 0} record(s) for the selected filters.
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            This action cannot be undone. Make sure you have previewed the count and selected the correct IMEI(s) and date range.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDmDeleteDialogOpen(false)} disabled={isDmDeleting}>Cancel</Button>
+          <Button onClick={handleDmConfirmDelete} variant="contained" color="error" disabled={isDmDeleting}>
+            {isDmDeleting ? 'Deleting...' : 'Delete Records'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
       <Dialog open={backupDialogOpen} onClose={() => setBackupDialogOpen(false)} maxWidth="sm" fullWidth>
         <DialogTitle>Create Backup</DialogTitle>
         <DialogContent>

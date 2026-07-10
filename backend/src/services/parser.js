@@ -111,7 +111,19 @@ class GalileoskyParser extends EventEmitter {
         for (const [imei, deviceRecords] of recordsByImei.entries()) {
             const outcome = await this.saveDeviceRecords(imei, deviceRecords);
             totalSaved += outcome.saved;
+            if (outcome.saved > 0) {
+                try {
+                    require('./ingestAuditService').trackRecordsSaved(imei, outcome.saved);
+                } catch (auditError) {
+                    // never block ingest on audit failures
+                }
+            }
             if (outcome.failed > 0) {
+                try {
+                    require('./ingestAuditService').trackSaveError(imei, outcome.failed);
+                } catch (auditError) {
+                    // never block ingest on audit failures
+                }
                 failures.push({ imei, failed: outcome.failed, total: deviceRecords.length });
             }
         }
