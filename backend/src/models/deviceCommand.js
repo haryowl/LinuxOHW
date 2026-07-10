@@ -83,6 +83,10 @@ module.exports = (sequelize) => {
         createdBy: {
             type: DataTypes.INTEGER,
             allowNull: true
+        },
+        broadcastId: {
+            type: DataTypes.UUID,
+            allowNull: true
         }
     }, {
         tableName: 'DeviceCommands'

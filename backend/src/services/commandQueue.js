@@ -6,6 +6,8 @@ const { DeviceCommand } = require('../models');
 const connectionRegistry = require('./connectionRegistry');
 const { buildCommandPacket } = require('./commandPacketBuilder');
 
+const OFFLINE_RETRY_MS = 10000;
+
 class CommandQueue {
     constructor() {
         this.intervalId = null;
@@ -63,6 +65,30 @@ class CommandQueue {
                 ]
             },
             order: [['priority', 'DESC'], ['createdAt', 'ASC']],
+            limit: 50
+        });
+
+        for (const command of commands) {
+            await this.processCommand(command);
+        }
+    }
+
+    async processQueueForImei(imei) {
+        if (!imei || this.stopped) {
+            return;
+        }
+
+        const now = new Date();
+        const commands = await DeviceCommand.findAll({
+            where: {
+                imei,
+                status: { [Op.in]: ['queued', 'failed'] },
+                [Op.or]: [
+                    { nextAttemptAt: null },
+                    { nextAttemptAt: { [Op.lte]: now } }
+                ]
+            },
+            order: [['priority', 'DESC'], ['createdAt', 'ASC']],
             limit: 20
         });
 
@@ -74,7 +100,11 @@ class CommandQueue {
     async processCommand(command) {
         const socket = connectionRegistry.getSocketByImei(command.imei);
         if (!socket || !socket.writable) {
-            await this.markFailed(command, 'Device not connected');
+            await command.update({
+                status: 'queued',
+                errorMessage: 'Waiting for device connection',
+                nextAttemptAt: new Date(Date.now() + OFFLINE_RETRY_MS)
+            });
             return;
         }
 
@@ -109,6 +139,7 @@ class CommandQueue {
             logger.info('Sending command packet', {
                 commandId: command.id,
                 imei: command.imei,
+                broadcastId: command.broadcastId || null,
                 bytes: packet.length,
                 packetHex: normalizedHex.toUpperCase()
             });
@@ -126,7 +157,8 @@ class CommandQueue {
                 status: 'sent',
                 sentAt: new Date(),
                 lastAttemptAt: new Date(),
-                errorMessage: null
+                errorMessage: null,
+                nextAttemptAt: null
             });
         } catch (error) {
             await this.markFailed(command, error.message || 'Socket write failed');

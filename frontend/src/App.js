@@ -30,6 +30,7 @@ const OfflineGridDemo = lazy(() => import('./components/OfflineGridDemo'));
 const UserManagement = lazy(() => import('./pages/UserManagement'));
 const RoleManagement = lazy(() => import('./pages/RoleManagement'));
 const CommandCenter = lazy(() => import('./pages/CommandCenter'));
+const BroadcastCommand = lazy(() => import('./pages/BroadcastCommand'));
 const ArchiveStat = lazy(() => import('./pages/ArchiveStat'));
 
 function PageLoader() {
@@ -153,6 +154,11 @@ function AppContent() {
                   <Route path="/command-center" element={
                     <ProtectedRoute requiredPermission="devices">
                       <Layout><LazyPage><CommandCenter /></LazyPage></Layout>
+                    </ProtectedRoute>
+                  } />
+                  <Route path="/broadcast-command" element={
+                    <ProtectedRoute requiredPermission="devices">
+                      <Layout><LazyPage><BroadcastCommand /></LazyPage></Layout>
                     </ProtectedRoute>
                   } />
                   <Route path="/archive-stat" element={

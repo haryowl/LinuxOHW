@@ -298,6 +298,31 @@ export async function apiFetchArchiveStats() {
   return response;
 }
 
+export async function apiFetchBroadcastJobs() {
+  const response = await authenticatedFetch(`${BASE_URL}/api/device-commands/broadcast`);
+  return response;
+}
+
+export async function apiFetchBroadcastJobDetail(broadcastId) {
+  const response = await authenticatedFetch(`${BASE_URL}/api/device-commands/broadcast/${broadcastId}`);
+  return response;
+}
+
+export async function apiCreateBroadcastCommand(payload) {
+  const response = await authenticatedFetch(`${BASE_URL}/api/device-commands/broadcast`, {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+  return response;
+}
+
+export async function apiCancelBroadcastJob(broadcastId) {
+  const response = await authenticatedFetch(`${BASE_URL}/api/device-commands/broadcast/${broadcastId}/cancel`, {
+    method: 'POST'
+  });
+  return response;
+}
+
 export async function apiCreateDeviceGroup(groupData) {
   try {
     const response = await authenticatedFetch(`${BASE_URL}/api/device-groups`, {

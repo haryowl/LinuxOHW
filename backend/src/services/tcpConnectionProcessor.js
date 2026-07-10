@@ -139,6 +139,13 @@ async function processPacket(packet, socket, clientAddress, parser, connectionRe
     const imei = parser.getIMEI(clientAddress);
     if (imei) {
         connectionRegistry.bindImeiToConnection(imei, clientAddress);
+        const commandQueue = require('./commandQueue');
+        commandQueue.processQueueForImei(imei).catch((error) => {
+            logger.warn('Failed to process queued commands after device connect', {
+                imei,
+                error: error.message
+            });
+        });
     }
 
     await parser.ensurePacketTelemetryPersisted(clientAddress);

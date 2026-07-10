@@ -10,6 +10,13 @@ const { checkDeviceAccess } = require('../middleware/permissions');
 const { getCommandList } = require('../services/commandList');
 const { getPresetsForType } = require('../services/commandPresets');
 const commandQueue = require('../services/commandQueue');
+const {
+    createBroadcastCommands,
+    summarizeBroadcastJobs,
+    getBroadcastJobDetail,
+    cancelBroadcastJob,
+    getBroadcastIdsForUser
+} = require('../services/broadcastCommandService');
 
 const router = express.Router();
 
@@ -135,6 +142,154 @@ async function getAccessibleImeis(user) {
     accessibleImeis = [...new Set(accessibleImeis)];
     return accessibleImeis;
 }
+
+async function getAccessibleDevices(user) {
+    if (user.role === 'admin') {
+        return Device.findAll({
+            attributes: ['id', 'imei', 'name'],
+            order: [['name', 'ASC']]
+        });
+    }
+
+    const imeis = await getAccessibleImeis(user);
+    if (!imeis || imeis.length === 0) {
+        return [];
+    }
+
+    return Device.findAll({
+        where: { imei: { [Op.in]: imeis } },
+        attributes: ['id', 'imei', 'name'],
+        order: [['name', 'ASC']]
+    });
+}
+
+async function resolveBroadcastTargetDevices(user, { targetType, groupId, deviceIds }) {
+    if (targetType === 'all') {
+        return getAccessibleDevices(user);
+    }
+
+    if (targetType === 'group') {
+        if (!groupId) {
+            throw new Error('groupId is required when targetType is group');
+        }
+
+        const group = await DeviceGroup.findByPk(groupId, {
+            include: [{ model: Device, as: 'devices', attributes: ['id', 'imei', 'name'] }]
+        });
+        if (!group) {
+            throw new Error('Device group not found');
+        }
+
+        const allowed = [];
+        for (const device of group.devices || []) {
+            const access = await resolveDeviceAccess(user, device.id);
+            if (access.allowed) {
+                allowed.push(access.device);
+            }
+        }
+        return allowed;
+    }
+
+    if (targetType === 'devices') {
+        if (!Array.isArray(deviceIds) || deviceIds.length === 0) {
+            throw new Error('deviceIds array is required when targetType is devices');
+        }
+
+        const allowed = [];
+        for (const deviceId of deviceIds) {
+            const access = await resolveDeviceAccess(user, deviceId);
+            if (access.allowed) {
+                allowed.push(access.device);
+            }
+        }
+        return allowed;
+    }
+
+    throw new Error('Invalid targetType. Use all, group, or devices.');
+}
+
+router.get('/broadcast', requireAuth, async (req, res) => {
+    try {
+        const accessibleBroadcastIds = req.user.role === 'admin'
+            ? null
+            : await getBroadcastIdsForUser(req.user.userId);
+        const jobs = await summarizeBroadcastJobs(accessibleBroadcastIds);
+        res.json(jobs);
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to load broadcast jobs' });
+    }
+});
+
+router.get('/broadcast/:broadcastId', requireAuth, async (req, res) => {
+    try {
+        const detail = await getBroadcastJobDetail(req.params.broadcastId);
+        if (!detail) {
+            return res.status(404).json({ error: 'Broadcast job not found' });
+        }
+
+        if (req.user.role !== 'admin') {
+            const accessibleBroadcastIds = await getBroadcastIdsForUser(req.user.userId);
+            if (!accessibleBroadcastIds.includes(req.params.broadcastId)) {
+                return res.status(403).json({ error: 'Access denied to this broadcast job' });
+            }
+        }
+
+        res.json(detail);
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to load broadcast job detail' });
+    }
+});
+
+router.post('/broadcast', requireAuth, async (req, res) => {
+    try {
+        const {
+            targetType = 'devices',
+            groupId,
+            deviceIds,
+            commandText,
+            commandNumber,
+            payloadHex,
+            priority,
+            maxRetries
+        } = req.body || {};
+
+        const devices = await resolveBroadcastTargetDevices(req.user, {
+            targetType,
+            groupId,
+            deviceIds
+        });
+
+        const result = await createBroadcastCommands(req.user, devices, {
+            commandText,
+            commandNumber,
+            payloadHex,
+            priority,
+            maxRetries
+        });
+
+        await commandQueue.processQueue();
+
+        res.json(result);
+    } catch (error) {
+        res.status(400).json({ error: error.message || 'Failed to create broadcast command' });
+    }
+});
+
+router.post('/broadcast/:broadcastId/cancel', requireAuth, async (req, res) => {
+    try {
+        if (req.user.role !== 'admin') {
+            const accessibleBroadcastIds = await getBroadcastIdsForUser(req.user.userId);
+            if (!accessibleBroadcastIds.includes(req.params.broadcastId)) {
+                return res.status(403).json({ error: 'Access denied to this broadcast job' });
+            }
+        }
+
+        const cancelled = await cancelBroadcastJob(req.params.broadcastId);
+        res.json({ broadcastId: req.params.broadcastId, cancelled });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to cancel broadcast job' });
+    }
+});
 
 router.get('/command-list', requireAuth, async (req, res) => {
     try {

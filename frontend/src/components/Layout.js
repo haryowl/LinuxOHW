@@ -40,6 +40,7 @@ import {
   Logout as LogoutIcon,
   Person as PersonIcon,
   Satellite as SatelliteIcon,
+  Campaign as CampaignIcon,
   LightMode as LightModeIcon,
   DarkMode as DarkModeIcon,
   People as PeopleIcon,
@@ -74,6 +75,7 @@ const Layout = ({ children }) => {
       import('../pages/UserManagement');
       import('../pages/RoleManagement');
       import('../pages/CommandCenter');
+      import('../pages/BroadcastCommand');
       import('../pages/ArchiveStat');
       import('../pages/DeviceDetail');
     };
@@ -88,6 +90,7 @@ const Layout = ({ children }) => {
       '/user-management': () => import('../pages/UserManagement'),
       '/role-management': () => import('../pages/RoleManagement'),
       '/command-center': () => import('../pages/CommandCenter'),
+      '/broadcast-command': () => import('../pages/BroadcastCommand'),
       '/archive-stat': () => import('../pages/ArchiveStat')
     };
     loaders[path]?.();
@@ -216,6 +219,13 @@ const Layout = ({ children }) => {
       icon: <SatelliteIcon />,
       path: '/command-center',
       description: 'Send commands to devices',
+      permission: 'devices'
+    },
+    {
+      text: 'Broadcast Command',
+      icon: <CampaignIcon />,
+      path: '/broadcast-command',
+      description: 'Queue commands for multiple devices',
       permission: 'devices'
     },
     { 
