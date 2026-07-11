@@ -1,8 +1,8 @@
 'use strict';
 
 const { Op } = require('sequelize');
-const { Record, sequelize } = require('../models');
-const { appendTimeRangeFilter, EFFECTIVE_TIME_SQL } = require('../utils/recordTimeQuery');
+const { Record } = require('../models');
+const { appendTimeRangeFilter } = require('../utils/recordTimeQuery');
 
 const DELETE_BATCH_SIZE = 5000;
 const GAP_WRAP_THRESHOLD = 60000;
@@ -111,60 +111,46 @@ function analyzeRecordNumberSequence(recordNumbers, maxGaps = 100) {
   };
 }
 
-function recordsTableSql() {
-  const dialect = sequelize.getDialect();
-  const tableName = Record.getTableName();
-  return dialect === 'postgres' ? `"${tableName}"` : tableName;
-}
-
 async function analyzeRecordGaps(filters, { maxGapsPerDevice = 50, deviceLimit = 100 } = {}) {
   const { start, end, imeis } = buildRecordWhere(filters);
-  const dialect = sequelize.getDialect();
-  const tableSql = recordsTableSql();
-  const timeSql = `${EFFECTIVE_TIME_SQL} BETWEEN :startDate AND :endDate`;
-  const countExpr = dialect === 'postgres' ? 'COUNT(*)::bigint' : 'COUNT(*)';
-  const recordNumberExpr = dialect === 'postgres' ? '"recordNumber"::int' : 'recordNumber';
-  const imeiCol = dialect === 'postgres' ? '"deviceImei"' : 'deviceImei';
-  const recordNumberCol = dialect === 'postgres' ? '"recordNumber"' : 'recordNumber';
 
   let targetImeis = imeis;
   if (!targetImeis.length) {
-    const [rows] = await sequelize.query(`
-      SELECT DISTINCT ${imeiCol} AS imei
-      FROM ${tableSql}
-      WHERE ${timeSql}
-      ORDER BY ${imeiCol}
-      LIMIT :deviceLimit
-    `, {
-      replacements: { startDate: start, endDate: end, deviceLimit }
+    // Same time semantics as Data Export (datetime in range OR null-datetime+timestamp in range)
+    const where = appendTimeRangeFilter({}, start, end);
+    const rows = await Record.findAll({
+      where,
+      attributes: ['deviceImei'],
+      group: ['deviceImei'],
+      order: [['deviceImei', 'ASC']],
+      limit: deviceLimit,
+      raw: true
     });
-    targetImeis = rows.map((row) => row.imei).filter(Boolean);
+    targetImeis = rows.map((row) => row.deviceImei).filter(Boolean);
   }
 
   const devices = [];
   for (const imei of targetImeis.slice(0, deviceLimit)) {
-    const [countRows] = await sequelize.query(`
-      SELECT ${countExpr} AS total
-      FROM ${tableSql}
-      WHERE ${imeiCol} = :imei
-        AND ${timeSql}
-    `, { replacements: { imei, startDate: start, endDate: end } });
+    const where = appendTimeRangeFilter({ deviceImei: String(imei) }, start, end);
 
-    const [numberRows] = await sequelize.query(`
-      SELECT ${recordNumberExpr} AS "recordNumber"
-      FROM ${tableSql}
-      WHERE ${imeiCol} = :imei
-        AND ${recordNumberCol} IS NOT NULL
-        AND ${timeSql}
-      ORDER BY ${recordNumberCol} ASC
-    `, { replacements: { imei, startDate: start, endDate: end } });
+    const savedCount = await Record.count({ where });
+
+    const numberRows = await Record.findAll({
+      where: {
+        ...where,
+        recordNumber: { [Op.ne]: null }
+      },
+      attributes: ['recordNumber'],
+      order: [['recordNumber', 'ASC']],
+      raw: true
+    });
 
     const recordNumbers = numberRows.map((row) => Number(row.recordNumber));
     const sequence = analyzeRecordNumberSequence(recordNumbers, maxGapsPerDevice);
 
     devices.push({
-      imei,
-      savedCount: Number(countRows[0]?.total || 0),
+      imei: String(imei),
+      savedCount,
       ...sequence
     });
   }
@@ -180,7 +166,7 @@ async function analyzeRecordGaps(filters, { maxGapsPerDevice = 50, deviceLimit =
   return {
     startDate: start.toISOString(),
     endDate: end.toISOString(),
-    imeis: targetImeis,
+    imeis: targetImeis.map((imei) => String(imei)),
     summary,
     devices
   };

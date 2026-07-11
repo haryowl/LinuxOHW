@@ -173,11 +173,16 @@ const Settings = () => {
   const [isDmLoading, setIsDmLoading] = useState(false);
   const [isDmDeleting, setIsDmDeleting] = useState(false);
 
-  const getDataManagementPayload = useCallback(() => ({
-    imeis: dmImeis,
-    startDate: new Date(dmStartDate).toISOString(),
-    endDate: new Date(dmEndDate).toISOString()
-  }), [dmImeis, dmStartDate, dmEndDate]);
+  const getDataManagementPayload = useCallback(() => {
+    // datetime-local values have no timezone; treat them as local wall time.
+    const start = new Date(dmStartDate);
+    const end = new Date(dmEndDate);
+    return {
+      imeis: (dmImeis || []).map((imei) => String(imei).trim()),
+      startDate: start.toISOString(),
+      endDate: end.toISOString()
+    };
+  }, [dmImeis, dmStartDate, dmEndDate]);
 
   const loadIngestAuditStatus = useCallback(async () => {
     if (!isAdmin) return;
@@ -1635,6 +1640,9 @@ const Settings = () => {
                 {dmGapReport && (
                   <Box sx={{ mt: 3 }}>
                     <Typography variant="subtitle1" gutterBottom>Gap Analysis Summary</Typography>
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                      Range used: {new Date(dmGapReport.startDate).toLocaleString()} → {new Date(dmGapReport.endDate).toLocaleString()}
+                    </Typography>
                     <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
                       Devices: {dmGapReport.summary.deviceCount} | Saved: {dmGapReport.summary.totalSaved.toLocaleString()} |
                       Missing estimate: {dmGapReport.summary.totalMissingEstimate.toLocaleString()} |

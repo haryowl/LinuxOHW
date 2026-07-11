@@ -11,12 +11,14 @@
  *   node scripts/stressTestDevices.js --host 127.0.0.1 --port 3003 --devices 20 --packets 30
  *   node scripts/stressTestDevices.js --host 62.84.189.162 --port 3003 --devices 20 --packets 50 --max-size 1024
  *   node scripts/stressTestDevices.js --host 127.0.0.1 --devices 20 --packets 20 --verify-db
+ *   node scripts/stressTestDevices.js --host 62.84.189.162 --devices 50 --duration-sec 7200 --interval-ms 30000
  *
  * Options:
  *   --host          TCP host (default 127.0.0.1)
  *   --port          TCP port (default 3003)
  *   --devices       Concurrent simulated devices (default 20)
  *   --packets       Telemetry packets per device after IMEI registration (default 30)
+ *   --duration-sec  Soak duration in seconds (overrides --packets when > 0)
  *   --max-size      Max packet data bytes (default 1024, matches MAX_PACKET_SIZE)
  *   --interval-ms   Delay between packets per device (default 0)
  *   --ack-timeout   ACK wait timeout ms (default 15000)
@@ -24,6 +26,9 @@
  *   --chunk-mode    full | partial | random | split-header | byte (default full)
  *   --chunk-size    Bytes per write in partial mode (default 7)
  *   --chunk-delay   Delay ms between chunk writes (default 0)
+ *   --progress-sec  Progress log interval seconds in duration mode (default 60)
+ *   --retries       Retries for same packet after ACK/send failure before skipping (default 3)
+ *   --extended-tags Include 0xFE extended tags (Modbus 0x0001/0x0002) in each record
  */
 
 const net = require('net');
@@ -39,6 +44,7 @@ function parseArgs(argv) {
     port: 3003,
     devices: 20,
     packets: 30,
+    durationSec: 0,
     maxSize: 1024,
     intervalMs: 0,
     ackTimeoutMs: 15000,
@@ -46,6 +52,9 @@ function parseArgs(argv) {
     chunkMode: 'full',
     chunkSize: 7,
     chunkDelayMs: 0,
+    progressSec: 60,
+    retries: 3,
+    extendedTags: false,
     verifyDb: false,
     json: false
   };
@@ -68,6 +77,10 @@ function parseArgs(argv) {
         break;
       case '--packets':
         options.packets = Number(next);
+        i += 1;
+        break;
+      case '--duration-sec':
+        options.durationSec = Number(next);
         i += 1;
         break;
       case '--max-size':
@@ -97,6 +110,17 @@ function parseArgs(argv) {
       case '--chunk-delay':
         options.chunkDelayMs = Number(next);
         i += 1;
+        break;
+      case '--progress-sec':
+        options.progressSec = Number(next);
+        i += 1;
+        break;
+      case '--retries':
+        options.retries = Number(next);
+        i += 1;
+        break;
+      case '--extended-tags':
+        options.extendedTags = true;
         break;
       case '--verify-db':
         options.verifyDb = true;
@@ -243,18 +267,21 @@ function connectDevice(host, port) {
   return new Promise((resolve, reject) => {
     const socket = new net.Socket();
     socket.setNoDelay(true);
+    socket.setKeepAlive(true, 10000);
     socket.connect(port, host, () => resolve(socket));
     socket.once('error', reject);
   });
 }
 
-async function runDeviceSimulation(deviceIndex, options) {
+async function runDeviceSimulation(deviceIndex, options, sharedProgress) {
   const imei = buildTestImei(options.imeiPrefix, deviceIndex);
   const stats = {
     deviceIndex,
     imei,
     connected: false,
     registrationAck: false,
+    reconnects: 0,
+    packetRetries: 0,
     packetsSent: 0,
     acksReceived: 0,
     recordsSent: 0,
@@ -266,8 +293,31 @@ async function runDeviceSimulation(deviceIndex, options) {
 
   let socket;
   const startedAt = performance.now();
+  const durationMs = options.durationSec > 0 ? options.durationSec * 1000 : 0;
+  const useDuration = durationMs > 0;
+  const maxRetries = Number.isFinite(options.retries) ? Math.max(0, options.retries) : 3;
+  let nextRecordNumber = 1;
+  // Use near-real wall-clock times (small per-device stagger only) so Gap Analysis /
+  // Data Export date filters match what operators expect.
+  const baseTimestamp = Math.floor(Date.now() / 1000) - (deviceIndex * 5);
+  let packetIndex = 0;
 
-  try {
+  const shouldContinue = () => {
+    if (useDuration) {
+      return (performance.now() - startedAt) < durationMs;
+    }
+    return packetIndex < options.packets;
+  };
+
+  const ensureConnected = async () => {
+    if (socket && !socket.destroyed) {
+      return;
+    }
+    if (socket) {
+      socket.destroy();
+      socket = null;
+      stats.reconnects += 1;
+    }
     socket = await connectDevice(options.host, options.port);
     stats.connected = true;
 
@@ -280,37 +330,85 @@ async function runDeviceSimulation(deviceIndex, options) {
     stats.registrationAck = true;
     stats.acksReceived += 1;
     stats.ackLatenciesMs.push(performance.now() - regAckStart);
+  };
 
-    let nextRecordNumber = 1;
-    const baseTimestamp = Math.floor(Date.now() / 1000) - (deviceIndex * 1000);
+  try {
+    while (shouldContinue()) {
+        const built = buildMultiRecordPacket({
+          maxDataBytes: options.maxSize,
+          startRecordNumber: nextRecordNumber,
+          baseTimestampSec: baseTimestamp + (packetIndex * 60),
+          deviceIndex,
+          includeExtendedTags: !!options.extendedTags
+        });
 
-    for (let packetIndex = 0; packetIndex < options.packets; packetIndex++) {
-      const built = buildMultiRecordPacket({
-        maxDataBytes: options.maxSize,
-        startRecordNumber: nextRecordNumber,
-        baseTimestampSec: baseTimestamp + (packetIndex * 60),
-        deviceIndex
-      });
+      let delivered = false;
+      let lastError = null;
+
+      for (let attempt = 0; attempt <= maxRetries && shouldContinue(); attempt++) {
+        try {
+          if (attempt > 0) {
+            stats.packetRetries += 1;
+            if (socket) {
+              socket.destroy();
+              socket = null;
+            }
+            await sleep(Math.min(2000 * attempt, 5000));
+          }
+
+          await ensureConnected();
+
+          const ackStart = performance.now();
+          const chunkCount = await sendPacketChunked(socket, built.packet, options, deviceIndex, packetIndex + 1);
+          stats.chunksSent += chunkCount;
+          stats.bytesSent += built.packet.length;
+
+          await waitForAck(socket, options.ackTimeoutMs);
+          stats.acksReceived += 1;
+          stats.ackLatenciesMs.push(performance.now() - ackStart);
+          stats.packetsSent += 1;
+          stats.recordsSent += built.recordCount;
+          delivered = true;
+
+          if (sharedProgress) {
+            sharedProgress.packetsSent += 1;
+            sharedProgress.acksReceived += 1;
+            sharedProgress.recordsSent += built.recordCount;
+          }
+          break;
+        } catch (error) {
+          lastError = error;
+          if (socket) {
+            socket.destroy();
+            socket = null;
+          }
+        }
+      }
+
+      if (!delivered) {
+        if (stats.failures.length < 20) {
+          stats.failures.push(lastError?.message || 'packet delivery failed after retries');
+        } else if (stats.failures.length === 20) {
+          stats.failures.push('…additional errors truncated');
+        }
+        if (!useDuration) {
+          break;
+        }
+        // After retries exhausted, skip this packet (real device would keep retrying;
+        // for soak we continue so the run can finish under heavy fault injection)
+        nextRecordNumber = built.endRecordNumber + 1;
+        packetIndex += 1;
+        await sleep(1000);
+        continue;
+      }
 
       nextRecordNumber = built.endRecordNumber + 1;
-      stats.recordsSent += built.recordCount;
+      packetIndex += 1;
 
-      const ackStart = performance.now();
-      const chunkCount = await sendPacketChunked(socket, built.packet, options, deviceIndex, packetIndex + 1);
-      stats.chunksSent += chunkCount;
-      stats.packetsSent += 1;
-      stats.bytesSent += built.packet.length;
-
-      await waitForAck(socket, options.ackTimeoutMs);
-      stats.acksReceived += 1;
-      stats.ackLatenciesMs.push(performance.now() - ackStart);
-
-      if (options.intervalMs > 0) {
+      if (options.intervalMs > 0 && shouldContinue()) {
         await sleep(options.intervalMs);
       }
     }
-  } catch (error) {
-    stats.failures.push(error.message);
   } finally {
     if (socket) {
       socket.destroy();
@@ -348,6 +446,8 @@ function summarize(deviceStats, options, totalDurationMs) {
     port: options.port,
     devices: options.devices,
     packetsPerDevice: options.packets,
+    durationSec: options.durationSec || 0,
+    intervalMs: options.intervalMs || 0,
     maxPacketDataBytes: options.maxSize,
     chunkMode: options.chunkMode,
     chunkSize: options.chunkSize,
@@ -359,6 +459,8 @@ function summarize(deviceStats, options, totalDurationMs) {
     totalRecordsAttempted: totalRecords,
     totalBytesSent: totalBytes,
     totalChunksSent: totalChunks,
+    totalReconnects: deviceStats.reduce((sum, item) => sum + (item.reconnects || 0), 0),
+    totalPacketRetries: deviceStats.reduce((sum, item) => sum + (item.packetRetries || 0), 0),
     failures: totalFailures,
     throughputPacketsPerSec: totalDurationMs > 0
       ? Number((totalPackets / (totalDurationMs / 1000)).toFixed(2))
@@ -419,23 +521,51 @@ async function main() {
   if (!Number.isFinite(options.devices) || options.devices < 1) {
     throw new Error('--devices must be >= 1');
   }
-  if (!Number.isFinite(options.packets) || options.packets < 1) {
-    throw new Error('--packets must be >= 1');
+  if (options.durationSec > 0) {
+    if (!Number.isFinite(options.durationSec)) {
+      throw new Error('--duration-sec must be a number');
+    }
+  } else if (!Number.isFinite(options.packets) || options.packets < 1) {
+    throw new Error('--packets must be >= 1 (or use --duration-sec)');
   }
 
   console.log('Galileosky TCP stress test');
   console.log('========================');
   console.log(`Target: ${options.host}:${options.port}`);
   console.log(`Devices: ${options.devices} concurrent`);
-  console.log(`Packets/device: ${options.packets} (max data ${options.maxSize} bytes, multi-record)`);
+  if (options.durationSec > 0) {
+    console.log(`Mode: soak ${options.durationSec}s (~${(options.durationSec / 3600).toFixed(2)}h)`);
+    console.log(`Interval: ${options.intervalMs} ms between packets/device`);
+  } else {
+    console.log(`Packets/device: ${options.packets} (max data ${options.maxSize} bytes, multi-record)`);
+  }
+  console.log(`Max packet data: ${options.maxSize} bytes`);
+  console.log(`Extended tags (0xFE): ${options.extendedTags ? 'yes (Modbus 0x0001/0x0002)' : 'no'}`);
   console.log(`Chunk mode: ${options.chunkMode}${options.chunkMode === 'partial' ? ` (size ${options.chunkSize})` : ''}`);
+  console.log(`IMEI prefix: ${options.imeiPrefix}`);
   console.log('');
 
   const startedAt = performance.now();
+  const sharedProgress = { packetsSent: 0, acksReceived: 0, recordsSent: 0 };
+  let progressTimer = null;
+  if (options.durationSec > 0 && options.progressSec > 0) {
+    progressTimer = setInterval(() => {
+      const elapsedSec = Math.round((performance.now() - startedAt) / 1000);
+      const remainingSec = Math.max(0, options.durationSec - elapsedSec);
+      console.log(
+        `[progress ${elapsedSec}s / ${options.durationSec}s | remaining ~${remainingSec}s] ` +
+        `packets=${sharedProgress.packetsSent} acks=${sharedProgress.acksReceived} records=${sharedProgress.recordsSent}`
+      );
+    }, options.progressSec * 1000);
+  }
+
   const deviceIndexes = Array.from({ length: options.devices }, (_, index) => index + 1);
   const deviceStats = await Promise.all(
-    deviceIndexes.map((deviceIndex) => runDeviceSimulation(deviceIndex, options))
+    deviceIndexes.map((deviceIndex) => runDeviceSimulation(deviceIndex, options, sharedProgress))
   );
+  if (progressTimer) {
+    clearInterval(progressTimer);
+  }
   const totalDurationMs = Math.round(performance.now() - startedAt);
   const summary = summarize(deviceStats, options, totalDurationMs);
 
@@ -449,7 +579,15 @@ async function main() {
     printHumanSummary(summary);
   }
 
-  if (summary.failures > 0 || summary.registeredDevices < options.devices) {
+  if (summary.registeredDevices < options.devices) {
+    process.exit(1);
+  }
+  if (options.durationSec > 0) {
+    // Soak mode: transient reconnect errors are expected; fail only if almost no traffic
+    if (summary.totalTelemetryPackets < options.devices) {
+      process.exit(1);
+    }
+  } else if (summary.failures > 0) {
     process.exit(1);
   }
 }
@@ -458,6 +596,9 @@ function printHumanSummary(summary) {
   console.log('Results');
   console.log('-------');
   console.log(`Duration: ${summary.totalDurationMs} ms`);
+  if (summary.durationSec) {
+    console.log(`Requested soak: ${summary.durationSec}s, interval ${summary.intervalMs}ms`);
+  }
   console.log(`Connected: ${summary.connectedDevices}/${summary.devices}`);
   console.log(`Registered (IMEI ACK): ${summary.registeredDevices}/${summary.devices}`);
   console.log(`Telemetry packets sent: ${summary.totalTelemetryPackets}`);
@@ -465,6 +606,8 @@ function printHumanSummary(summary) {
   console.log(`Records in packets: ${summary.totalRecordsAttempted}`);
   console.log(`Bytes sent: ${summary.totalBytesSent}`);
   console.log(`TCP chunks sent: ${summary.totalChunksSent}`);
+  console.log(`Reconnects: ${summary.totalReconnects}`);
+  console.log(`Packet retries: ${summary.totalPacketRetries || 0}`);
   console.log(`Chunk mode: ${summary.chunkMode}`);
   console.log(`Throughput: ${summary.throughputPacketsPerSec} packets/s, ${summary.throughputRecordsPerSec} records/s`);
   console.log(`ACK latency avg/p95/max: ${summary.avgAckLatencyMs}/${summary.p95AckLatencyMs}/${summary.maxAckLatencyMs} ms`);
