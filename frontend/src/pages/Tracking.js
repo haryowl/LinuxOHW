@@ -39,6 +39,7 @@ import {
   DirectionsCar as CarIcon,
   DirectionsBoat as ShipIcon
 } from '@mui/icons-material';
+import DeviceSearchSelect from '../components/DeviceSearchSelect';
 import { DateTimePicker } from '@mui/x-date-pickers/DateTimePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
@@ -452,20 +453,13 @@ const Tracking = () => {
             
             <Grid container spacing={2} alignItems="center">
               <Grid item xs={12} md={3}>
-                <FormControl fullWidth>
-                  <InputLabel>Device</InputLabel>
-                  <Select
-                    value={selectedDevice}
-                    onChange={(e) => setSelectedDevice(e.target.value)}
-                    label="Device"
-                  >
-                    {devices.map((device) => (
-                      <MenuItem key={device.imei} value={device.imei}>
-                        {device.name || device.imei}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
+                <DeviceSearchSelect
+                  valueKey="imei"
+                  label="Device"
+                  devices={devices}
+                  value={selectedDevice}
+                  onChange={setSelectedDevice}
+                />
               </Grid>
               
               <Grid item xs={12} md={3}>

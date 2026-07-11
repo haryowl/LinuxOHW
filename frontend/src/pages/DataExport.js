@@ -22,13 +22,13 @@ import {
   Tabs,
   Tab,
   Chip,
-  OutlinedInput,
 } from '@mui/material';
 import FileDownloadIcon from '@mui/icons-material/FileDownload';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import axios from 'axios';
 import { useSnackbar } from 'notistack';
 import { BASE_URL, startAsyncExport, fetchExportJobStatus, getExportJobDownloadUrl, fetchDevices } from '../services/api';
+import DeviceSearchSelect from '../components/DeviceSearchSelect';
 
 const PREVIEW_PAGE_SIZE = 100;
 
@@ -150,11 +150,6 @@ const DataExport = () => {
       enqueueSnackbar('Failed to load preview data', { variant: 'error' });
     }
     setLoading(false);
-  };
-
-  const getDeviceLabel = (imei) => {
-    const device = availableDevices.find((d) => d.imei === imei);
-    return device?.name || imei;
   };
 
   const fetchAvailableDevices = async () => {
@@ -298,9 +293,8 @@ const DataExport = () => {
     setActiveTab(newValue);
   };
 
-  const handleDeviceChange = (event) => {
-    const value = event.target.value;
-    setSelectedImeis(typeof value === 'string' ? value.split(',') : value);
+  const handleDeviceChange = (imeis) => {
+    setSelectedImeis(Array.isArray(imeis) ? imeis : []);
   };
 
   return (
@@ -353,40 +347,17 @@ const DataExport = () => {
             </FormControl>
           </Grid>
           <Grid item xs={12} md={4}>
-            <FormControl fullWidth>
-              <InputLabel>Select Device Names (Optional)</InputLabel>
-              <Select
-                multiple
-                value={selectedImeis}
-                onChange={handleDeviceChange}
-                input={<OutlinedInput label="Select Device Names (Optional)" />}
-                renderValue={(selected) => (
-                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                    {selected.map((imei) => (
-                      <Chip key={imei} label={getDeviceLabel(imei)} size="small" />
-                    ))}
-                  </Box>
-                )}
-                disabled={devicesLoading}
-              >
-                {devicesLoading ? (
-                  <MenuItem disabled>Loading devices...</MenuItem>
-                ) : availableDevices.length === 0 ? (
-                  <MenuItem disabled>No devices available</MenuItem>
-                ) : (
-                  availableDevices.map((device) => (
-                    <MenuItem key={device.imei} value={device.imei}>
-                      {device.name || device.imei}
-                    </MenuItem>
-                  ))
-                )}
-              </Select>
-            </FormControl>
-            {selectedImeis.length === 0 && (
-              <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
-                Leave empty to export data from all devices
-              </Typography>
-            )}
+            <DeviceSearchSelect
+              multiple
+              valueKey="imei"
+              label="Select Device Names (Optional)"
+              devices={availableDevices}
+              value={selectedImeis}
+              onChange={handleDeviceChange}
+              disabled={devicesLoading}
+              loading={devicesLoading}
+              helperText={selectedImeis.length === 0 ? 'Leave empty to export data from all devices' : undefined}
+            />
           </Grid>
           <Grid item xs={12} md={6}>
             <Button

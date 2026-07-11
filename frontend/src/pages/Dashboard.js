@@ -16,12 +16,7 @@ import {
   alpha,
   useTheme,
   ToggleButton,
-  ToggleButtonGroup,
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem,
-  OutlinedInput
+  ToggleButtonGroup
 } from '@mui/material';
 import {
   Refresh as RefreshIcon,
@@ -37,6 +32,7 @@ import { useData } from '../contexts/DataContext';
 import { useSnackbar } from 'notistack';
 import TrackingMap from '../components/TrackingMap';
 import LoadingState from '../components/LoadingState';
+import DeviceSearchSelect from '../components/DeviceSearchSelect';
 
 const Dashboard = () => {
   const { devices, records, alerts, stats, loading, loadingSecondary, error, refreshStats } = useData();
@@ -58,9 +54,8 @@ const Dashboard = () => {
     if (newRange) setStatsRange(newRange);
   };
 
-  const handleDeviceFilterChange = (event) => {
-    const value = event.target.value;
-    setSelectedDeviceImeis(typeof value === 'string' ? value.split(',') : value);
+  const handleDeviceFilterChange = (imeis) => {
+    setSelectedDeviceImeis(Array.isArray(imeis) ? imeis : []);
   };
 
   const visibleDevices = Array.isArray(devices)
@@ -339,41 +334,16 @@ const Dashboard = () => {
                   Device Locations
                 </Typography>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                  <FormControl size="small" sx={{ minWidth: 240 }}>
-                    <InputLabel>Filter Devices</InputLabel>
-                    <Select
-                      multiple
-                      value={selectedDeviceImeis}
-                      onChange={handleDeviceFilterChange}
-                      input={<OutlinedInput label="Filter Devices" />}
-                      renderValue={(selected) => (
-                        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                          {selected.map((value) => {
-                            const device = Array.isArray(devices)
-                              ? devices.find((item) => item.imei === value)
-                              : null;
-                            return (
-                              <Chip
-                                key={value}
-                                label={device?.name || value}
-                                size="small"
-                              />
-                            );
-                          })}
-                        </Box>
-                      )}
-                    >
-                      {!Array.isArray(devices) || devices.length === 0 ? (
-                        <MenuItem disabled>No devices available</MenuItem>
-                      ) : (
-                        devices.map((device) => (
-                          <MenuItem key={device.imei} value={device.imei}>
-                            {device.name || device.imei}
-                          </MenuItem>
-                        ))
-                      )}
-                    </Select>
-                  </FormControl>
+                  <DeviceSearchSelect
+                    multiple
+                    valueKey="imei"
+                    label="Filter Devices"
+                    devices={Array.isArray(devices) ? devices : []}
+                    value={selectedDeviceImeis}
+                    onChange={handleDeviceFilterChange}
+                    size="small"
+                    sx={{ minWidth: 280 }}
+                  />
                   <Chip
                     label={selectedDeviceImeis.length > 0
                       ? `${selectedDeviceImeis.length} selected`

@@ -32,6 +32,7 @@ import {
   apiFetchDeviceGroups,
   apiFetchDevicesRaw
 } from '../services/api';
+import DeviceSearchSelect from '../components/DeviceSearchSelect';
 import { useWebSocketMessage } from '../hooks/useWebSocket';
 
 const TARGET_TYPES = [
@@ -282,22 +283,15 @@ const BroadcastCommand = () => {
             )}
 
             {targetType === 'devices' && (
-              <FormControl fullWidth sx={{ mb: 2 }}>
-                <InputLabel>Devices</InputLabel>
-                <Select
-                  multiple
-                  label="Devices"
-                  value={selectedDeviceIds}
-                  onChange={(event) => setSelectedDeviceIds(event.target.value)}
-                  renderValue={(selected) => `${selected.length} device(s) selected`}
-                >
-                  {devices.map((device) => (
-                    <MenuItem key={device.id} value={device.id}>
-                      {device.name} ({device.imei})
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
+              <DeviceSearchSelect
+                multiple
+                valueKey="id"
+                label="Devices"
+                devices={devices}
+                value={selectedDeviceIds}
+                onChange={setSelectedDeviceIds}
+                sx={{ mb: 2 }}
+              />
             )}
 
             <FormControl fullWidth sx={{ mb: 2 }}>

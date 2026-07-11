@@ -43,6 +43,7 @@ import {
 import { useSnackbar } from 'notistack';
 import { formatDistanceToNow } from 'date-fns';
 import { apiFetchDevicesRaw, apiFetchDeviceGroups, apiCreateDeviceGroup, apiUpdateDeviceGroup, apiDeleteDeviceGroup, apiAddDeviceToGroup, apiRemoveDeviceFromGroup } from '../services/api';
+import DeviceSearchSelect from '../components/DeviceSearchSelect';
 
 const DeviceGroupManagement = () => {
   const { enqueueSnackbar } = useSnackbar();
@@ -480,22 +481,14 @@ const DeviceGroupManagement = () => {
               Add Device to Group
             </Typography>
             <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
-              <FormControl fullWidth>
-                <InputLabel>Select Device</InputLabel>
-                <Select
-                  value={selectedDeviceId}
-                  onChange={(e) => setSelectedDeviceId(e.target.value)}
-                  label="Select Device"
-                >
-                  {getAvailableDevices(deviceDialog.group?.id)
-                    .filter(device => device.groupId !== deviceDialog.group?.id)
-                    .map((device) => (
-                      <MenuItem key={device.id} value={device.id}>
-                        {device.name} ({device.imei})
-                      </MenuItem>
-                    ))}
-                </Select>
-              </FormControl>
+              <DeviceSearchSelect
+                valueKey="id"
+                label="Select Device"
+                devices={getAvailableDevices(deviceDialog.group?.id)
+                  .filter((device) => device.groupId !== deviceDialog.group?.id)}
+                value={selectedDeviceId}
+                onChange={setSelectedDeviceId}
+              />
               <Button
                 variant="contained"
                 onClick={handleAddDeviceToGroup}

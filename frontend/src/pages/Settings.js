@@ -75,6 +75,7 @@ import {
   fetchIngestAuditStatus,
   fetchIngestAuditSummary
 } from '../services/api';
+import DeviceSearchSelect from '../components/DeviceSearchSelect';
 
 const Settings = () => {
   const theme = useTheme();
@@ -127,7 +128,7 @@ const Settings = () => {
   const [isLoadingForwarder, setIsLoadingForwarder] = useState(false);
   const [forwarderLogs, setForwarderLogs] = useState([]);
   const [isLoadingLogs, setIsLoadingLogs] = useState(false);
-  const [deviceOptions, setDeviceOptions] = useState([]);
+  const [settingsDevices, setSettingsDevices] = useState([]);
   const [retentionConfig, setRetentionConfig] = useState({
     enabled: false,
     retentionDays: 365,
@@ -601,7 +602,8 @@ const Settings = () => {
         const response = await fetchDevices();
         if (response.ok) {
           const devices = await response.json();
-          setDeviceOptions(devices.map(d => ({ label: d.imei, value: d.imei })));
+          const list = Array.isArray(devices) ? devices : [];
+          setSettingsDevices(list);
         }
       } catch (e) {}
     };
@@ -1527,23 +1529,19 @@ const Settings = () => {
 
                 <Grid container spacing={2}>
                   <Grid item xs={12} md={6}>
-                    <TextField
+                    <DeviceSearchSelect
+                      multiple
+                      valueKey="imei"
                       label="Device IMEIs (optional — empty = all devices)"
-                      select
-                      SelectProps={{ multiple: true }}
+                      devices={settingsDevices}
                       value={dmImeis}
-                      onChange={(e) => {
-                        setDmImeis(e.target.value);
+                      onChange={(imeis) => {
+                        setDmImeis(imeis);
                         setDmPreviewCount(null);
                         setDmGapReport(null);
                         setDmIngestSummary(null);
                       }}
-                      fullWidth
-                    >
-                      {deviceOptions.map((opt) => (
-                        <MenuItem key={opt.value} value={opt.value}>{opt.label}</MenuItem>
-                      ))}
-                    </TextField>
+                    />
                   </Grid>
                   <Grid item xs={12} md={6}>
                     <TextField
@@ -1762,20 +1760,15 @@ const Settings = () => {
                   />
                 </Grid>
                 <Grid item xs={12} sm={12} md={4}>
-                  <TextField
+                  <DeviceSearchSelect
+                    multiple
+                    valueKey="imei"
                     label="Device IMEIs to Forward"
-                    name="forwardDeviceImeis"
-                    select
-                    SelectProps={{ multiple: true }}
+                    devices={settingsDevices}
                     value={forwarderConfig.forwardDeviceImeis || []}
-                    onChange={e => setForwarderConfig(cfg => ({ ...cfg, forwardDeviceImeis: e.target.value }))}
-                    fullWidth
+                    onChange={(imeis) => setForwarderConfig((cfg) => ({ ...cfg, forwardDeviceImeis: imeis }))}
                     disabled={!forwarderConfig.autoForwardEnabled}
-                  >
-                    {deviceOptions.map(opt => (
-                      <MenuItem key={opt.value} value={opt.value}>{opt.label}</MenuItem>
-                    ))}
-                  </TextField>
+                  />
                 </Grid>
                 <Grid item xs={12} sm={6} md={8}>
                   <TextField

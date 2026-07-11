@@ -36,6 +36,7 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import axios from 'axios';
 import { useSnackbar } from 'notistack';
 import { BASE_URL } from '../services/api';
+import DeviceSearchSelect from '../components/DeviceSearchSelect';
 
 const DataSM = () => {
   const { enqueueSnackbar } = useSnackbar();
@@ -402,30 +403,15 @@ const DataSM = () => {
 
           <Grid container spacing={2} sx={{ mt: 2 }}>
             <Grid item xs={12}>
-              <FormControl fullWidth>
-                <InputLabel>Select Devices</InputLabel>
-                <Select
-                  multiple
-                  value={selectedDevices}
-                  onChange={(e) => setSelectedDevices(e.target.value)}
-                  renderValue={(selected) => (
-                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                      {selected.map((value) => {
-                        const device = availableDevices.find(d => d.imei === value);
-                        return (
-                          <Chip key={value} label={device ? device.name || device.imei : value} />
-                        );
-                      })}
-                    </Box>
-                  )}
-                >
-                  {availableDevices.map((device) => (
-                    <MenuItem key={device.imei} value={device.imei}>
-                      {device.name || device.imei}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
+              <DeviceSearchSelect
+                multiple
+                valueKey="imei"
+                label="Select Devices"
+                devices={availableDevices}
+                value={selectedDevices}
+                onChange={setSelectedDevices}
+                helperText={selectedDevices.length === 0 ? 'Leave empty to include all devices' : undefined}
+              />
             </Grid>
           </Grid>
 

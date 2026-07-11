@@ -28,6 +28,7 @@ import {
   apiSendDeviceCommand,
   apiSendDeviceCommandsBulk
 } from '../services/api';
+import DeviceSearchSelect from '../components/DeviceSearchSelect';
 
 const CommandCenter = () => {
   const [devices, setDevices] = useState([]);
@@ -200,29 +201,15 @@ const CommandCenter = () => {
         <Grid item xs={12} md={6}>
           <Paper sx={{ p: 2 }}>
             <Typography variant="h6" sx={{ mb: 2 }}>Send Command</Typography>
-            <FormControl fullWidth sx={{ mb: 2 }}>
-              <InputLabel>Devices</InputLabel>
-              <Select
-                multiple
-                label="Devices"
-                value={selectedDeviceIds}
-                onChange={(event) => setSelectedDeviceIds(event.target.value)}
-                renderValue={(selected) => {
-                  if (!selected.length) return 'Select devices';
-                  if (selected.length === 1) {
-                    const device = devices.find(item => item.id === selected[0]);
-                    return device ? `${device.name} (${device.imei})` : selected[0];
-                  }
-                  return `${selected.length} devices selected`;
-                }}
-              >
-                {devices.map(device => (
-                  <MenuItem key={device.id} value={device.id}>
-                    {device.name} ({device.imei})
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
+            <DeviceSearchSelect
+              multiple
+              valueKey="id"
+              label="Devices"
+              devices={devices}
+              value={selectedDeviceIds}
+              onChange={setSelectedDeviceIds}
+              sx={{ mb: 2 }}
+            />
 
             <FormControl fullWidth sx={{ mb: 2 }}>
               <InputLabel>Preset Command</InputLabel>

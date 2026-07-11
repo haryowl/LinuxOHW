@@ -29,6 +29,7 @@ import {
   TextField,
   Switch
 } from '@mui/material';
+import DeviceSearchSelect from '../components/DeviceSearchSelect';
 import {
   Map as MapIcon,
   Satellite as SatelliteIcon,
@@ -269,32 +270,33 @@ const fetchDeviceTrackingData = async (deviceImei) => {
     }
   };
 
-  // Handle device selection
+  // Keep map colors in sync when Autocomplete selection changes
+  useEffect(() => {
+    setSelectedDeviceColors((prev) => {
+      const next = {};
+      selectedDevices.forEach((imei, index) => {
+        next[imei] = prev[imei] || COLOR_PALETTE[index % COLOR_PALETTE.length];
+      });
+      return next;
+    });
+
+    setDeviceTrackingData((prev) => {
+      const next = { ...prev };
+      Object.keys(next).forEach((imei) => {
+        if (!selectedDevices.includes(imei)) {
+          delete next[imei];
+        }
+      });
+      return next;
+    });
+  }, [selectedDevices]);
+
+  // Handle device selection (kept for compatibility with any remaining callers)
   const handleDeviceSelection = (deviceImei, isSelected) => {
     if (isSelected) {
-      const device = devices.find(d => d.imei === deviceImei);
-      if (device) {
-        const colorIndex = selectedDevices.length % COLOR_PALETTE.length;
-        setSelectedDevices(prev => [...prev, deviceImei]);
-        setSelectedDeviceColors(prev => ({
-          ...prev,
-          [deviceImei]: COLOR_PALETTE[colorIndex]
-        }));
-      }
+      setSelectedDevices((prev) => (prev.includes(deviceImei) ? prev : [...prev, deviceImei]));
     } else {
-      setSelectedDevices(prev => prev.filter(imei => imei !== deviceImei));
-      setSelectedDeviceColors(prev => {
-        const newColors = { ...prev };
-        delete newColors[deviceImei];
-        return newColors;
-      });
-      
-      // Remove tracking data for deselected device
-      setDeviceTrackingData(prev => {
-        const newData = { ...prev };
-        delete newData[deviceImei];
-        return newData;
-      });
+      setSelectedDevices((prev) => prev.filter((imei) => imei !== deviceImei));
     }
   };
 
@@ -520,53 +522,14 @@ const fetchDeviceTrackingData = async (deviceImei) => {
                 <Typography variant="subtitle2" gutterBottom>
                   Select Devices ({selectedDevices.length} selected)
                 </Typography>
-                <List dense>
-                  {devices.map((device, index) => {
-                    const isSelected = selectedDevices.includes(device.imei);
-                    const deviceColor = getDeviceColor(device.imei);
-                    
-                    return (
-                      <ListItem key={device.imei} dense>
-                        <FormControlLabel
-                          control={
-                            <Checkbox
-                              checked={isSelected}
-                              onChange={(e) => handleDeviceSelection(device.imei, e.target.checked)}
-                              sx={{
-                                color: deviceColor,
-                                '&.Mui-checked': {
-                                  color: deviceColor,
-                                }
-                              }}
-                            />
-                          }
-                          label={
-                            <Box sx={{ display: 'flex', alignItems: 'center', width: '100%' }}>
-                              <Box
-                                sx={{
-                                  width: 16,
-                                  height: 16,
-                                  borderRadius: '50%',
-                                  backgroundColor: deviceColor,
-                                  mr: 1,
-                                  border: '1px solid #ccc'
-                                }}
-                              />
-                              <Box sx={{ flex: 1 }}>
-                                <Typography variant="body2" noWrap>
-                                  {device.name}
-                                </Typography>
-                                <Typography variant="caption" color="text.secondary">
-                                  {device.imei}
-                                </Typography>
-                              </Box>
-                            </Box>
-                          }
-                        />
-                      </ListItem>
-                    );
-                  })}
-                </List>
+                <DeviceSearchSelect
+                  multiple
+                  valueKey="imei"
+                  label="Search devices"
+                  devices={devices}
+                  value={selectedDevices}
+                  onChange={setSelectedDevices}
+                />
               </Box>
 
               <Divider sx={{ my: 2 }} />
