@@ -24,11 +24,12 @@ function requireImeis(imeis) {
   return normalized;
 }
 
-async function findDevicesByImeis(imeis) {
+async function findDevicesByImeis(imeis, transaction = null) {
   return Device.findAll({
     where: { imei: { [Op.in]: imeis } },
     attributes: ['id', 'imei', 'name'],
-    raw: true
+    raw: true,
+    ...(transaction ? { transaction } : {})
   });
 }
 
@@ -38,18 +39,20 @@ async function countRecordsForImeis(imeis) {
   });
 }
 
-async function deleteRecordsForImeis(imeis) {
+async function deleteRecordsForImeis(imeis, transaction = null) {
   let totalDeleted = 0;
   while (true) {
     const rows = await Record.findAll({
       where: { deviceImei: { [Op.in]: imeis } },
       attributes: ['id'],
       limit: RECORD_BATCH_SIZE,
-      raw: true
+      raw: true,
+      ...(transaction ? { transaction } : {})
     });
     if (!rows.length) break;
     const deleted = await Record.destroy({
-      where: { id: { [Op.in]: rows.map((row) => row.id) } }
+      where: { id: { [Op.in]: rows.map((row) => row.id) } },
+      ...(transaction ? { transaction } : {})
     });
     totalDeleted += deleted;
     if (rows.length < RECORD_BATCH_SIZE) break;
@@ -66,12 +69,15 @@ async function safeCount(model, where) {
   }
 }
 
-async function safeDestroy(model, where) {
+async function destroyWhere(model, where, transaction, label) {
   if (!model) return 0;
   try {
-    return await model.destroy({ where });
+    return await model.destroy({
+      where,
+      ...(transaction ? { transaction } : {})
+    });
   } catch (error) {
-    return 0;
+    throw new Error(`${label} delete failed: ${error.message}`);
   }
 }
 
@@ -169,58 +175,110 @@ async function cleanupDevices({
     devices: 0
   };
 
-  await sequelize.transaction(async () => {
+  await sequelize.transaction(async (transaction) => {
     if (deleteRecords) {
-      deleted.records = await deleteRecordsForImeis(normalized);
+      deleted.records = await deleteRecordsForImeis(normalized, transaction);
     }
 
     if (deleteCommands) {
-      deleted.commands = await safeDestroy(DeviceCommand, {
-        [Op.or]: [
-          { imei: { [Op.in]: normalized } },
-          ...(deviceIds.length ? [{ deviceId: { [Op.in]: deviceIds } }] : [])
-        ]
-      });
+      deleted.commands = await destroyWhere(
+        DeviceCommand,
+        {
+          [Op.or]: [
+            { imei: { [Op.in]: normalized } },
+            ...(deviceIds.length ? [{ deviceId: { [Op.in]: deviceIds } }] : [])
+          ]
+        },
+        transaction,
+        'Commands'
+      );
     }
 
     if (deleteAudit) {
-      deleted.ingestAudit = await safeDestroy(IngestAuditSummary, {
-        deviceImei: { [Op.in]: normalized }
-      });
+      deleted.ingestAudit = await destroyWhere(
+        IngestAuditSummary,
+        { deviceImei: { [Op.in]: normalized } },
+        transaction,
+        'Ingest audit'
+      );
     }
 
     if (deleteArchiveStats) {
-      deleted.archiveStats = await safeDestroy(DeviceArchiveStat, {
-        [Op.or]: [
-          { imei: { [Op.in]: normalized } },
-          ...(deviceIds.length ? [{ deviceId: { [Op.in]: deviceIds } }] : [])
-        ]
-      });
+      deleted.archiveStats = await destroyWhere(
+        DeviceArchiveStat,
+        {
+          [Op.or]: [
+            { imei: { [Op.in]: normalized } },
+            ...(deviceIds.length ? [{ deviceId: { [Op.in]: deviceIds } }] : [])
+          ]
+        },
+        transaction,
+        'Archive stats'
+      );
     }
 
     if (deviceIds.length) {
       if (deleteAlerts) {
-        deleted.alerts = await safeDestroy(Alert, { deviceId: { [Op.in]: deviceIds } });
+        deleted.alerts = await destroyWhere(
+          Alert,
+          { deviceId: { [Op.in]: deviceIds } },
+          transaction,
+          'Alerts'
+        );
       }
       if (deleteMappings) {
-        deleted.mappings = await safeDestroy(FieldMapping, { deviceId: { [Op.in]: deviceIds } });
+        deleted.mappings = await destroyWhere(
+          FieldMapping,
+          { deviceId: { [Op.in]: deviceIds } },
+          transaction,
+          'Field mappings'
+        );
       }
       if (deleteUserAccess) {
-        deleted.userAccess = await safeDestroy(UserDeviceAccess, { deviceId: { [Op.in]: deviceIds } });
+        deleted.userAccess = await destroyWhere(
+          UserDeviceAccess,
+          { deviceId: { [Op.in]: deviceIds } },
+          transaction,
+          'User access'
+        );
       }
       if (deleteDevices) {
         deleted.devices = await Device.destroy({
-          where: { id: { [Op.in]: deviceIds } }
+          where: { id: { [Op.in]: deviceIds } },
+          transaction
         });
       }
     }
   });
 
+  let remainingDevices = 0;
+  if (deleteDevices) {
+    remainingDevices = await Device.count({
+      where: { imei: { [Op.in]: normalized } }
+    });
+    if (remainingDevices > 0) {
+      throw new Error(
+        `Cleanup reported deleting ${deleted.devices} device row(s), but ${remainingDevices} still exist for the selected IMEI(s). Check foreign-key constraints or reconnecting devices recreating rows.`
+      );
+    }
+  }
+
+  // Clear in-memory device manager entries if present
+  try {
+    const deviceManager = require('./deviceManager');
+    if (typeof deviceManager.clearDeviceCache === 'function') {
+      deviceManager.clearDeviceCache();
+    }
+  } catch (error) {
+    // optional
+  }
+
   return {
     message: 'Device cleanup completed',
     imeis: normalized,
     preview,
-    deleted
+    deleted,
+    remainingDevices
   };
 }
 

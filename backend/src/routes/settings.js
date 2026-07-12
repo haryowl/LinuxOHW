@@ -385,6 +385,15 @@
     router.post('/devices/cleanup', requireAdmin, asyncHandler(async (req, res) => {
         try {
             const result = await deviceCleanupService.cleanupDevices(req.body || {});
+            // Device list API caches GET /api/devices for 5 minutes — bust it or UI keeps showing deleted rows.
+            try {
+                const devicesRoute = require('./devices');
+                if (typeof devicesRoute.clearAllDeviceCache === 'function') {
+                    devicesRoute.clearAllDeviceCache();
+                }
+            } catch (cacheError) {
+                console.warn('Failed to clear device list cache after cleanup:', cacheError.message);
+            }
             res.json(result);
         } catch (error) {
             return res.status(400).json({ error: error.message || 'Device cleanup failed' });

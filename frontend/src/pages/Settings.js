@@ -376,9 +376,12 @@ const Settings = () => {
       const data = await response.json();
       if (response.ok) {
         const d = data.deleted || {};
+        const deviceMsg = dcOptions.deleteDevices
+          ? `devices: ${d.devices || 0}${data.remainingDevices ? ` (still remaining: ${data.remainingDevices})` : ''}`
+          : 'devices: skipped';
         showSnackbar(
-          `Cleanup done — devices: ${d.devices || 0}, records: ${d.records || 0}, commands: ${d.commands || 0}, audit: ${d.ingestAudit || 0}`,
-          'success'
+          `Cleanup done — ${deviceMsg}, records: ${d.records || 0}, commands: ${d.commands || 0}, audit: ${d.ingestAudit || 0}`,
+          data.remainingDevices ? 'warning' : 'success'
         );
         setDcPreview(null);
         setDcDialogOpen(false);

@@ -388,8 +388,8 @@ router.get('/multi-tracking', requireAuth, filterDevicesByPermission, asyncHandl
     res.json(devicesWithLocations);
 }));
 
-// Export the cache clearing function for use in other routes
-module.exports = { router, clearUserDeviceCache };
+// Export cache clearing for other routes (settings cleanup, access grants, etc.)
+module.exports = { router, clearUserDeviceCache, clearAllDeviceCache };
 
 // Get all devices (filtered by user permissions) - OPTIMIZED
 router.get('/', requireAuth, filterDevicesByPermission, asyncHandler(async (req, res) => {
@@ -666,6 +666,7 @@ router.delete('/:id', requireAuth, checkDeviceAccess, asyncHandler(async (req, r
     }
 
     await device.destroy();
+    clearAllDeviceCache();
     res.json({ message: 'Device deleted successfully' });
 }));
 
