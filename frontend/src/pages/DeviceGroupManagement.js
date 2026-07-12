@@ -163,6 +163,12 @@ const DeviceGroupManagement = () => {
         enqueueSnackbar('Device is already in this group', { variant: 'info' });
       } else {
         enqueueSnackbar('Device added to group successfully', { variant: 'success' });
+        // Keep local device list in sync immediately (in case devices API cache was stale).
+        setDevices((prev) => prev.map((device) => (
+          String(device.id) === String(selectedDeviceId)
+            ? { ...device, groupId: deviceDialog.group.id }
+            : device
+        )));
       }
       setDeviceDialog({ open: false, group: null });
       setSelectedDeviceId('');
@@ -206,31 +212,35 @@ const DeviceGroupManagement = () => {
     }
   };
 
-  // Get available devices for a group (devices not in any group or in this specific group)
-  const getAvailableDevices = useCallback((groupId) => {
-    if (!Array.isArray(devices)) return [];
-    return devices.filter(device => 
-      !device.groupId || device.groupId === groupId
-    );
-  }, [devices]);
-
   // Get devices in a specific group
   const getDevicesInGroup = useCallback((groupId) => {
     if (!Array.isArray(devices)) return [];
-    console.log('🔍 Filtering devices for group:', groupId);
-    console.log('📱 Available devices:', devices.map(d => ({ id: d.id, name: d.name, groupId: d.groupId, groupIdType: typeof d.groupId })));
-    
-    const devicesInGroup = devices.filter(device => {
-      const deviceGroupId = parseInt(device.groupId);
-      const targetGroupId = parseInt(groupId);
-      const matches = deviceGroupId === targetGroupId;
-      console.log(`Device ${device.name}: groupId=${device.groupId} (${typeof device.groupId}) vs target=${groupId} (${typeof groupId}) = ${matches}`);
-      return matches;
+    const targetGroupId = Number(groupId);
+    if (!Number.isFinite(targetGroupId)) return [];
+
+    // Prefer association from groups API when present (avoids stale /api/devices cache).
+    const group = Array.isArray(groups)
+      ? groups.find((g) => Number(g.id) === targetGroupId)
+      : null;
+    if (Array.isArray(group?.devices)) {
+      const byId = new Map(devices.map((d) => [String(d.id), d]));
+      return group.devices.map((gd) => byId.get(String(gd.id)) || gd);
+    }
+
+    return devices.filter((device) => Number(device.groupId) === targetGroupId);
+  }, [devices, groups]);
+
+  // Devices available to add (not already in this group)
+  const getAvailableDevices = useCallback((groupId) => {
+    if (!Array.isArray(devices)) return [];
+    const targetGroupId = Number(groupId);
+    const inGroupIds = new Set(getDevicesInGroup(groupId).map((d) => String(d.id)));
+    return devices.filter((device) => {
+      if (inGroupIds.has(String(device.id))) return false;
+      // Allow ungrouped devices, or devices already in another group (reassign)
+      return !device.groupId || Number(device.groupId) !== targetGroupId;
     });
-    
-    console.log('✅ Devices in group:', devicesInGroup.map(d => d.name));
-    return devicesInGroup;
-  }, [devices]);
+  }, [devices, getDevicesInGroup]);
 
   if (loading) {
     return (
@@ -484,8 +494,7 @@ const DeviceGroupManagement = () => {
               <DeviceSearchSelect
                 valueKey="id"
                 label="Select Device"
-                devices={getAvailableDevices(deviceDialog.group?.id)
-                  .filter((device) => device.groupId !== deviceDialog.group?.id)}
+                devices={getAvailableDevices(deviceDialog.group?.id)}
                 value={selectedDeviceId}
                 onChange={setSelectedDeviceId}
               />

@@ -4,6 +4,17 @@ const { DeviceGroup, Device, User } = require('../models');
 const { requireAuth } = require('./auth');
 const logger = require('../utils/logger');
 
+function clearDeviceListCache() {
+  try {
+    const devicesRoute = require('./devices');
+    if (typeof devicesRoute.clearAllDeviceCache === 'function') {
+      devicesRoute.clearAllDeviceCache();
+    }
+  } catch (error) {
+    logger.warn('Failed to clear device list cache after group change', { error: error.message });
+  }
+}
+
 // Middleware to check if user is admin or manager
 const requireManager = (req, res, next) => {
   if (!['admin', 'manager'].includes(req.user.role)) {
@@ -197,16 +208,17 @@ router.post('/:id/devices', requireAuth, requireManager, async (req, res) => {
     }
 
     // Check if device is already in this group (idempotent success)
-    if (device.groupId === groupId) {
+    if (Number(device.groupId) === Number(groupId)) {
       logger.info('Device already in group', { groupId, deviceId, requestedBy: req.user.userId });
       return res.json({ message: 'Device is already in this group', alreadyInGroup: true });
     }
 
     // Add device to group
     await device.update({ groupId });
+    clearDeviceListCache();
 
     logger.info('Device added to group', { groupId, deviceId, addedBy: req.user.userId });
-    res.json({ message: 'Device added to group successfully' });
+    res.json({ message: 'Device added to group successfully', groupId, deviceId: device.id });
   } catch (error) {
     logger.error('Error adding device to group:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -230,12 +242,13 @@ router.delete('/:id/devices/:deviceId', requireAuth, requireManager, async (req,
     }
 
     // Check if device is in this group
-    if (device.groupId !== groupId) {
+    if (Number(device.groupId) !== Number(groupId)) {
       return res.status(400).json({ error: 'Device is not in this group' });
     }
 
     // Remove device from group
     await device.update({ groupId: null });
+    clearDeviceListCache();
 
     logger.info('Device removed from group', { groupId, deviceId, removedBy: req.user.userId });
     res.json({ message: 'Device removed from group successfully' });
