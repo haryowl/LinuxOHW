@@ -394,6 +394,14 @@
             } catch (cacheError) {
                 console.warn('Failed to clear device list cache after cleanup:', cacheError.message);
             }
+            try {
+                const cache = require('../utils/cache');
+                if (typeof cache.clear === 'function') {
+                    cache.clear();
+                }
+            } catch (cacheError) {
+                console.warn('Failed to clear dashboard cache after cleanup:', cacheError.message);
+            }
             res.json(result);
         } catch (error) {
             return res.status(400).json({ error: error.message || 'Device cleanup failed' });

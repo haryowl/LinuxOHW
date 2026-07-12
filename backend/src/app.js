@@ -391,14 +391,26 @@ app.get('/api/dashboard/stats', requireAuth, async (req, res) => {
         const now = new Date();
         const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
         const accessibleImeis = await resolveAccessibleDeviceImeis(user);
+        const isPostgres = (process.env.DB_DIALECT || '').toLowerCase().startsWith('postgres');
 
         let totalDevices = 0;
-        let totalRecords = 0;
-        let recentRecords = 0;
+        let allTimeRecords = 0;
+        let last24hRecords = 0;
         let activeDevices = 0;
 
-        // Avoid full-table COUNT on huge SQLite DBs during login — blocks locations/map.
-        // Use live table columns (not Sequelize model attrs) to avoid selecting missing fields.
+        // Avoid MAX(id) as "total records" — deletes do not lower MAX(id), so the UI never shrinks.
+        const countRecords = async (where = {}) => {
+            if (isPostgres || Object.keys(where).length > 0) {
+                return Record.count({ where });
+            }
+            // SQLite fallback estimate only when counting the full table with no filter
+            const [estimateRow] = await sequelize.query(
+                'SELECT MAX(id) AS total FROM "Records"',
+                { type: QueryTypes.SELECT }
+            );
+            return Number(estimateRow?.total) || 0;
+        };
+
         const deviceColumns = await getDeviceTableColumns(sequelize);
         const hasLastGpsColumns = deviceColumns.has('lastLatitude') && deviceColumns.has('lastLongitude');
 
@@ -420,15 +432,19 @@ app.get('/api/dashboard/stats', requireAuth, async (req, res) => {
                     }
                 });
             }
-            const [estimateRow] = await sequelize.query(
-                'SELECT MAX(id) AS total FROM "Records"',
-                { type: QueryTypes.SELECT }
-            );
-            totalRecords = Number(estimateRow?.total) || 0;
-            // Approximate recent activity from devices that reported recently
-            recentRecords = activeDevices;
+            allTimeRecords = await countRecords();
+            last24hRecords = await countRecords({
+                [Op.or]: [
+                    { datetime: { [Op.gte]: oneDayAgo } },
+                    {
+                        datetime: null,
+                        timestamp: { [Op.gte]: oneDayAgo }
+                    }
+                ]
+            });
         } else if (accessibleImeis.length > 0) {
             const deviceWhere = { imei: { [Op.in]: accessibleImeis } };
+            const recordWhere = { deviceImei: { [Op.in]: accessibleImeis } };
             totalDevices = await Device.count({ where: deviceWhere });
             if (hasLastGpsColumns) {
                 activeDevices = await Device.count({
@@ -448,23 +464,47 @@ app.get('/api/dashboard/stats', requireAuth, async (req, res) => {
                     }
                 });
             }
-            // Skip expensive Records COUNT — use device count as lightweight placeholder
-            totalRecords = 0;
-            recentRecords = activeDevices;
+            allTimeRecords = await countRecords(recordWhere);
+            last24hRecords = await countRecords({
+                ...recordWhere,
+                [Op.or]: [
+                    { datetime: { [Op.gte]: oneDayAgo } },
+                    {
+                        datetime: null,
+                        timestamp: { [Op.gte]: oneDayAgo }
+                    }
+                ]
+            });
         }
 
         const stats = {
             totalDevices,
             activeDevices,
-            totalRecords,
-            recentRecords,
-            lastUpdate: now.toISOString()
+            totalRecords: allTimeRecords,
+            recentRecords: last24hRecords,
+            lastUpdate: now.toISOString(),
+            // Dashboard toggle expects these keys
+            allTime: {
+                totalDevices,
+                activeDevices,
+                totalRecords: allTimeRecords,
+                lastUpdate: now.toISOString()
+            },
+            last24h: {
+                totalDevices,
+                activeDevices,
+                totalRecords: last24hRecords,
+                lastUpdate: now.toISOString()
+            }
         };
 
         cache.set(cacheKey, stats, 120000);
         logger.debug(`Dashboard stats completed in ${Date.now() - requestStart}ms`, {
             userId: user.userId,
-            role: user.role
+            role: user.role,
+            totalDevices,
+            allTimeRecords,
+            last24hRecords
         });
         res.json(stats);
     } catch (error) {
