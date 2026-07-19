@@ -21,6 +21,7 @@ const http = require('http');
 const websocketHandler = require('./services/websocketHandler');
 const archiveStatStore = require('./services/archiveStatStore');
 const archiveStatScheduler = require('./services/archiveStatScheduler');
+const { shouldQueueOut } = require('./services/archiveStatConfig');
 const GalileoskyParser = require('./services/parser');
 const cache = require('./utils/cache');
 const net = require('net');
@@ -472,7 +473,7 @@ parser.on('commandReply', async (reply) => {
 
             websocketHandler.broadcast('archivestat_update', archivedStats);
 
-            if ((serv1Queue < 20 || serv2Queue < 20) && archiveStatStore.shouldSendOut(imei, 300000)) {
+            if (shouldQueueOut(serv1Queue, serv2Queue, 20) && archiveStatStore.shouldSendOut(imei, 300000)) {
                 const commandNumberOut = randomInt4CommandNumber();
                 if (device) {
                     await DeviceCommand.create({

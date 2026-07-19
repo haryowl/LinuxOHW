@@ -67,6 +67,8 @@ import {
   fetchRetentionConfig,
   updateRetentionConfig,
   runRetentionPurge,
+  fetchArchiveStatConfig,
+  updateArchiveStatConfig,
   fetchStorageConfig,
   updateStorageConfig,
   runStorageCleanup,
@@ -141,6 +143,10 @@ const Settings = () => {
   });
   const [isLoadingRetention, setIsLoadingRetention] = useState(false);
   const [isPurgingRetention, setIsPurgingRetention] = useState(false);
+  const [archiveStatConfig, setArchiveStatConfig] = useState({
+    outTriggerMode: 'either'
+  });
+  const [isLoadingArchiveStat, setIsLoadingArchiveStat] = useState(false);
   const [storageConfig, setStorageConfig] = useState({
     logs: { enabled: true, maxTotalSizeMB: 500, maxFilesPerDirectory: 5 },
     exports: { enabled: true, retentionDays: 30 },
@@ -489,6 +495,41 @@ const Settings = () => {
     }
   };
 
+  const loadArchiveStatConfig = useCallback(async () => {
+    if (!isAdmin) return;
+    try {
+      setIsLoadingArchiveStat(true);
+      const response = await fetchArchiveStatConfig();
+      if (response.ok) {
+        setArchiveStatConfig(await response.json());
+      } else {
+        showSnackbar('Failed to load ArchiveStat settings', 'error');
+      }
+    } catch (error) {
+      showSnackbar('Failed to load ArchiveStat settings', 'error');
+    } finally {
+      setIsLoadingArchiveStat(false);
+    }
+  }, [isAdmin]);
+
+  const handleSaveArchiveStat = async () => {
+    try {
+      setIsLoadingArchiveStat(true);
+      const response = await updateArchiveStatConfig(archiveStatConfig);
+      const data = await response.json();
+      if (response.ok) {
+        setArchiveStatConfig(data.config || archiveStatConfig);
+        showSnackbar('ArchiveStat settings saved', 'success');
+      } else {
+        showSnackbar(data.error || 'Failed to save ArchiveStat settings', 'error');
+      }
+    } catch (error) {
+      showSnackbar('Failed to save ArchiveStat settings', 'error');
+    } finally {
+      setIsLoadingArchiveStat(false);
+    }
+  };
+
   const loadRetentionConfig = useCallback(async () => {
     if (!isAdmin) return;
     try {
@@ -681,6 +722,7 @@ const Settings = () => {
     fetchSettings();
     fetchForwarderConfig();
     loadRetentionConfig();
+    loadArchiveStatConfig();
     loadStorageConfig();
     
     // Load secondary data with delay to avoid overwhelming
@@ -696,7 +738,7 @@ const Settings = () => {
     return () => {
       clearInterval(statusInterval);
     };
-  }, [fetchSettings, fetchForwarderConfig, loadRetentionConfig, loadStorageConfig]);
+  }, [fetchSettings, fetchForwarderConfig, loadRetentionConfig, loadArchiveStatConfig, loadStorageConfig]);
 
   useEffect(() => {
     // Fetch device IMEIs for the multi-select
@@ -1381,6 +1423,48 @@ const Settings = () => {
             </CardContent>
           </Card>
         </Grid>
+
+        {isAdmin && (
+          <Grid item xs={12} md={6}>
+            <Card>
+              <CardContent sx={{ p: 3 }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+                  <SettingsIcon sx={{ mr: 2, color: theme.palette.primary.main }} />
+                  <Typography variant="h5" fontWeight="600">
+                    ArchiveStat Automatic Command
+                  </Typography>
+                </Box>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                  Select which archive queue must be below 20 before automatically sending OUT 3,0.
+                </Typography>
+                <TextField
+                  select
+                  fullWidth
+                  label="OUT 3,0 trigger"
+                  value={archiveStatConfig.outTriggerMode || 'either'}
+                  onChange={(e) => setArchiveStatConfig({
+                    ...archiveStatConfig,
+                    outTriggerMode: e.target.value
+                  })}
+                  disabled={isLoadingArchiveStat}
+                >
+                  <MenuItem value="server1">Server 1 queue is below 20</MenuItem>
+                  <MenuItem value="server2">Server 2 queue is below 20</MenuItem>
+                  <MenuItem value="either">Server 1 or Server 2 queue is below 20</MenuItem>
+                </TextField>
+                <Button
+                  variant="contained"
+                  startIcon={<SaveIcon />}
+                  onClick={handleSaveArchiveStat}
+                  disabled={isLoadingArchiveStat}
+                  sx={{ mt: 2 }}
+                >
+                  {isLoadingArchiveStat ? 'Saving...' : 'Save ArchiveStat Settings'}
+                </Button>
+              </CardContent>
+            </Card>
+          </Grid>
+        )}
 
         {isAdmin && (
           <Grid item xs={12}>

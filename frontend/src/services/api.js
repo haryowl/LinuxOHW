@@ -199,6 +199,17 @@ export async function runRetentionPurge() {
   });
 }
 
+export async function fetchArchiveStatConfig() {
+  return authenticatedFetch(`${BASE_URL}/api/settings/archive-stat`);
+}
+
+export async function updateArchiveStatConfig(config) {
+  return authenticatedFetch(`${BASE_URL}/api/settings/archive-stat`, {
+    method: 'PUT',
+    body: JSON.stringify(config),
+  });
+}
+
 export async function fetchStorageConfig() {
   return authenticatedFetch(`${BASE_URL}/api/settings/storage`);
 }

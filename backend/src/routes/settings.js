@@ -8,6 +8,10 @@
     const recordRetention = require('../services/recordRetention');
     const { getStorageConfig, updateStorageConfig } = require('../services/storageConfig');
     const storageCleanup = require('../services/storageCleanup');
+    const {
+        getArchiveStatConfig,
+        updateArchiveStatConfig
+    } = require('../services/archiveStatConfig');
     const { getSystemStatus, buildSystemHealth } = require('../utils/systemMetrics');
 
     router.use(requireAuth);
@@ -256,6 +260,21 @@
         const { logs, exports, backups } = req.body;
         const config = updateStorageConfig({ logs, exports, backups });
         res.json({ message: 'Storage settings updated', config });
+    }));
+
+    router.get('/archive-stat', requireAdmin, asyncHandler(async (req, res) => {
+        res.json(getArchiveStatConfig());
+    }));
+
+    router.put('/archive-stat', requireAdmin, asyncHandler(async (req, res) => {
+        try {
+            const config = updateArchiveStatConfig({
+                outTriggerMode: req.body?.outTriggerMode
+            });
+            res.json({ message: 'ArchiveStat settings updated', config });
+        } catch (error) {
+            res.status(error.statusCode || 400).json({ error: error.message });
+        }
     }));
 
     router.post('/storage/cleanup', requireAdmin, asyncHandler(async (req, res) => {
