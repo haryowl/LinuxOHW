@@ -322,59 +322,49 @@ function parseArchiveStatReply(replyText) {
     return parts;
 }
 
+/** Device OUT replies look like "OUT(3..0) = 1011". */
+function isOutReplyText(replyText) {
+    return typeof replyText === 'string' && /^OUT\b/i.test(replyText.trim());
+}
+
+function isOutCommandText(commandText) {
+    return normalizeCommandText(commandText).startsWith('OUT ');
+}
+
+function commandNumberMatches(storedValue, replyValue) {
+    const stored = normalizeCommandNumber(storedValue);
+    const reply = normalizeCommandNumber(replyValue);
+    if (stored === null || reply === null) {
+        return false;
+    }
+    if (stored === reply) {
+        return true;
+    }
+    // Devices sometimes echo only the low 16 bits of 0xE0.
+    return (stored & 0xFFFF) === (reply & 0xFFFF);
+}
+
+function isCompatibleCommandMatch(commandText, replyText) {
+    const archiveParts = parseArchiveStatReply(replyText);
+    const outReply = isOutReplyText(replyText);
+    const text = normalizeCommandText(commandText);
+
+    if (archiveParts) {
+        return text === 'ARCHIVESTAT';
+    }
+    if (outReply) {
+        return text.startsWith('OUT ');
+    }
+    // Generic/user replies must not attach to auto ARCHIVESTAT / OUT rows.
+    return text !== 'ARCHIVESTAT' && !text.startsWith('OUT ');
+}
+
 async function findOpenCommandForReply(imei, normalizedCommandNumber, replyText) {
     const openStatuses = { [Op.in]: ['sent', 'queued'] };
     const recentSince = new Date(Date.now() - 15 * 60 * 1000);
     const archiveParts = parseArchiveStatReply(replyText);
+    const outReply = isOutReplyText(replyText);
 
-    if (normalizedCommandNumber !== null) {
-        let command = await DeviceCommand.findOne({
-            where: {
-                imei,
-                status: openStatuses,
-                commandNumber: normalizedCommandNumber
-            },
-            order: [['sentAt', 'DESC'], ['createdAt', 'DESC']]
-        });
-
-        // Fallback for signed/unsigned INTEGER truncation in older rows
-        if (!command && normalizedCommandNumber > 0x7FFFFFFF) {
-            const signed = normalizedCommandNumber - 0x100000000;
-            command = await DeviceCommand.findOne({
-                where: {
-                    imei,
-                    status: openStatuses,
-                    commandNumber: signed
-                },
-                order: [['sentAt', 'DESC'], ['createdAt', 'DESC']]
-            });
-        }
-
-        if (command) {
-            const matchedSystem = isSystemAutoCommand(command.commandText);
-            // Never cross-wire ArchiveStat <-> user/broadcast replies even if 0xE0 collided.
-            if (archiveParts && !matchedSystem) {
-                logger.warn('Ignoring commandNumber match that would mix ARCHIVESTAT reply into user command', {
-                    imei,
-                    replyCommandNumber: normalizedCommandNumber,
-                    matchedCommandId: command.id,
-                    matchedCommandText: command.commandText
-                });
-            } else if (!archiveParts && normalizeCommandText(command.commandText) === 'ARCHIVESTAT') {
-                logger.warn('Ignoring commandNumber match that would mix user reply into ARCHIVESTAT', {
-                    imei,
-                    replyCommandNumber: normalizedCommandNumber,
-                    matchedCommandId: command.id,
-                    matchedCommandText: command.commandText
-                });
-            } else {
-                return command;
-            }
-        }
-    }
-
-    // Content-aware fallback only — never "newest any open command" (that mixed
-    // auto ARCHIVESTAT replies into Broadcast status / Command Center rows).
     const recentOpen = await DeviceCommand.findAll({
         where: {
             imei,
@@ -385,6 +375,56 @@ async function findOpenCommandForReply(imei, normalizedCommandNumber, replyText)
         limit: 20
     });
 
+    if (normalizedCommandNumber !== null) {
+        // Exact DB match first, then tolerate 16-bit echo truncation.
+        let command = recentOpen.find(
+            (row) => normalizeCommandNumber(row.commandNumber) === normalizedCommandNumber
+        ) || null;
+
+        if (!command && normalizedCommandNumber > 0x7FFFFFFF) {
+            const signed = normalizedCommandNumber - 0x100000000;
+            command = recentOpen.find((row) => Number(row.commandNumber) === signed) || null;
+        }
+
+        if (!command) {
+            const truncatedMatches = recentOpen.filter(
+                (row) => commandNumberMatches(row.commandNumber, normalizedCommandNumber)
+            );
+            if (truncatedMatches.length === 1) {
+                command = truncatedMatches[0];
+                logger.warn('Command reply matched by low-16-bit commandNumber', {
+                    imei,
+                    replyCommandNumber: normalizedCommandNumber,
+                    matchedCommandId: command.id,
+                    matchedCommandNumber: command.commandNumber,
+                    matchedCommandText: command.commandText
+                });
+            } else if (truncatedMatches.length > 1) {
+                const compatible = truncatedMatches.filter(
+                    (row) => isCompatibleCommandMatch(row.commandText, replyText)
+                );
+                if (compatible.length === 1) {
+                    command = compatible[0];
+                }
+            }
+        }
+
+        if (command) {
+            if (!isCompatibleCommandMatch(command.commandText, replyText)) {
+                logger.warn('Ignoring incompatible commandNumber match for reply content', {
+                    imei,
+                    replyCommandNumber: normalizedCommandNumber,
+                    matchedCommandId: command.id,
+                    matchedCommandText: command.commandText,
+                    replyPreview: typeof replyText === 'string' ? replyText.slice(0, 80) : null
+                });
+            } else {
+                return command;
+            }
+        }
+    }
+
+    // Content-aware fallback — never "newest any open command".
     if (archiveParts) {
         const archiveCommand = recentOpen.find(
             (row) => normalizeCommandText(row.commandText) === 'ARCHIVESTAT'
@@ -397,6 +437,21 @@ async function findOpenCommandForReply(imei, normalizedCommandNumber, replyText)
                 matchedCommandNumber: archiveCommand.commandNumber
             });
             return archiveCommand;
+        }
+        return null;
+    }
+
+    if (outReply) {
+        const outCommands = recentOpen.filter((row) => isOutCommandText(row.commandText));
+        if (outCommands.length >= 1) {
+            logger.warn('Command reply matched open OUT command by reply content', {
+                imei,
+                replyCommandNumber: normalizedCommandNumber,
+                matchedCommandId: outCommands[0].id,
+                matchedCommandNumber: outCommands[0].commandNumber,
+                matchedCommandText: outCommands[0].commandText
+            });
+            return outCommands[0];
         }
         return null;
     }
@@ -416,14 +471,16 @@ async function findOpenCommandForReply(imei, normalizedCommandNumber, replyText)
     if (normalizedCommandNumber === null) {
         logger.warn('Received command reply without commandNumber; no safe open command to update', {
             imei,
-            openUserCommands: userCommands.length
+            openUserCommands: userCommands.length,
+            openTotal: recentOpen.length
         });
     } else {
         logger.warn('No matching open command for reply; leaving rows unchanged', {
             imei,
             replyCommandNumber: normalizedCommandNumber,
             openUserCommands: userCommands.length,
-            openTotal: recentOpen.length
+            openTotal: recentOpen.length,
+            replyPreview: typeof replyText === 'string' ? replyText.slice(0, 80) : null
         });
     }
     return null;
